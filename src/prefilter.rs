@@ -29,12 +29,11 @@ pub fn rebuild_match_prefilter(
     let mut max_len = 0usize;
 
     for (id, cluster) in clusters.iter().enumerate().skip(1) {
-        let cluster = match cluster.as_ref() {
-            Some(c) => c,
-            None => continue,
+        let Some(c) = cluster.as_ref() else {
+            continue;
         };
 
-        let token_count = cluster.token_ids.len();
+        let token_count = c.token_ids.len();
         if token_count > max_len {
             max_len = token_count;
         }
@@ -43,8 +42,8 @@ pub fn rebuild_match_prefilter(
             continue;
         }
 
-        let first_id = cluster.token_ids[0];
-        let last_id = cluster.token_ids[token_count - 1];
+        let first_id = c.token_ids[0];
+        let last_id = c.token_ids[token_count - 1];
         let first_is_param = first_id == param_id;
         let last_is_param = last_id == param_id;
 
@@ -190,10 +189,9 @@ fn search_sorted_token_id<'a>(
     vals: &'a [Vec<ClusterId>],
     target: TokenId,
 ) -> &'a [ClusterId] {
-    match keys.binary_search(&target) {
-        Ok(i) => &vals[i],
-        Err(_) => &[],
-    }
+    keys.binary_search(&target)
+        .map(|i| &vals[i][..])
+        .unwrap_or(&[])
 }
 
 fn sorted_token_id_keys(

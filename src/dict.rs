@@ -24,11 +24,10 @@ impl FrozenDict {
         Self { keys, vals }
     }
 
-    /// Lookup a key.  Returns `Some(id)` if found, `None` otherwise.
     pub fn lookup(&self, key: &str) -> Option<TokenId> {
-        match self.keys.binary_search_by(|probe| probe.as_str().cmp(key)) {
-            Ok(idx) => Some(self.vals[idx]),
-            Err(_) => None,
-        }
+        self.keys
+            .binary_search_by(|probe| probe.as_str().cmp(key))
+            .ok()
+            .map(|idx| self.vals[idx])
     }
 }

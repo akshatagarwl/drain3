@@ -274,20 +274,8 @@ impl Cluster {
                 self.non_param_idx.push(i);
             }
         }
-        match self.non_param_idx.len() {
-            0 => {
-                self.anchor0 = None;
-                self.anchor1 = None;
-            }
-            1 => {
-                self.anchor0 = Some(self.non_param_idx[0]);
-                self.anchor1 = None;
-            }
-            _ => {
-                self.anchor0 = Some(self.non_param_idx[0]);
-                self.anchor1 = Some(self.non_param_idx[self.non_param_idx.len() - 1]);
-            }
-        }
+        self.anchor0 = self.non_param_idx.first().copied();
+        self.anchor1 = self.non_param_idx.last().copied();
     }
     fn extract_args_into(&self, line_tokens: &[String], param_id: TokenId, dst: &mut Vec<String>) {
         if self.token_ids.is_empty() || line_tokens.is_empty() || self.param_count == 0 {
@@ -602,13 +590,12 @@ impl Matcher {
         let n_tokens = tokens.len();
         let needed = self.required_score(n_tokens, threshold);
 
-        // Fast path: at threshold=1.0 with includeParams, return the first
+        // Fast path: at threshold=1.0 with include_params, return the first
         // perfect match — every non-param token must match exactly.
         if include_params && threshold >= 1.0 {
             'next_candidate: for &cid in cluster_ids {
-                let c = match self.clusters.get(cid.0).and_then(|c| c.as_ref()) {
-                    Some(c) => c,
-                    None => continue,
+                let Some(c) = self.clusters.get(cid.0).and_then(|c| c.as_ref()) else {
+                    continue;
                 };
                 if c.token_str.len() != n_tokens {
                     continue;
@@ -640,9 +627,8 @@ impl Matcher {
         let mut max_param_count: isize = -1;
         let mut max_cluster: Option<&Cluster> = None;
         for &cid in cluster_ids {
-            let c = match self.clusters.get(cid.0).and_then(|c| c.as_ref()) {
-                Some(c) => c,
-                None => continue,
+            let Some(c) = self.clusters.get(cid.0).and_then(|c| c.as_ref()) else {
+                continue;
             };
             if c.token_str.len() != n_tokens {
                 continue;
@@ -830,9 +816,8 @@ impl Matcher {
     fn sync_templates_from_clusters(&mut self) {
         let mut out: Vec<Template> = Vec::with_capacity(self.clusters.len().saturating_sub(1));
         for id in 1..self.clusters.len() {
-            let c = match self.clusters[id].as_ref() {
-                Some(c) => c,
-                None => continue,
+            let Some(c) = self.clusters[id].as_ref() else {
+                continue;
             };
             out.push(c.to_template(self.param_id));
         }
@@ -1043,10 +1028,8 @@ impl RenderPlan {
     pub fn append(&self, dst: &mut Vec<u8>, args: Option<&[&str]>) {
         dst.extend_from_slice(&self.head);
         for seg in &self.segments {
-            if let Some(a) = args {
-                if let Some(s) = a.get(seg.arg_idx) {
-                    dst.extend_from_slice(s.as_bytes());
-                }
+            if let Some(s) = args.and_then(|a| a.get(seg.arg_idx)) {
+                dst.extend_from_slice(s.as_bytes());
             }
             dst.extend_from_slice(&seg.tail);
         }
@@ -1260,12 +1243,12 @@ mod tests {
             .match_threshold(0.0)
             .build();
         let m = train(&["A B C".into(), "A B D".into()], cfg).unwrap();
-        // MatchThreshold=0.0 accepts any tree-routable candidate.
+        // match_threshold=0.0 accepts any tree-routable candidate.
         assert!(
             m.match_id("A X Y").is_some(),
             "expected match with 0.0 match threshold"
         );
-        // SimilarityThreshold=0.0 merges aggressively: one template.
+        // similarity_threshold=0.0 merges aggressively: one template.
         assert_eq!(
             m.templates().len(),
             1,

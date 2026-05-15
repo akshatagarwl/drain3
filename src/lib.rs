@@ -862,17 +862,21 @@ impl Matcher {
     }
     /// Add a single log line to an unfinalized matcher.
     ///
+    /// Returns the [`Template`] for the matched or newly created cluster.
+    /// Returns `None` if the line is rejected (too long, too many tokens, or
+    /// max clusters reached).
+    ///
     /// # Panics
     /// Panics if called on a matcher that has already been finalized.
-    pub fn add_log_message(&mut self, content: &str) {
-        let Some(tokens) = self.tokenize_input(content) else {
-            return;
-        };
+    pub fn add_log_message(&mut self, content: &str) -> Option<Template> {
+        let tokens = self.tokenize_input(content)?;
         let tc = tokens.len();
         if tc >= self.root_by_len.len() {
             // First log with this token count: create cluster + tree path.
-            self.create_cluster(tokens);
-            return;
+            let cid = self.create_cluster(tokens);
+            return self.clusters[cid.0]
+                .as_ref()
+                .map(|c| c.to_template(self.param_id));
         }
         if let Some(c) =
             self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold(), false)
@@ -897,13 +901,24 @@ impl Matcher {
                 cluster.rebuild_non_param_idx(self.param_id);
             }
             cluster.count += 1;
-            return;
+            return Some(cluster.to_template(self.param_id));
         }
         // No match — create new cluster
         if self.cfg.max_clusters() > 0 && self.next_cluster.0 > self.cfg.max_clusters() {
-            return;
+            return None;
         }
-        self.create_cluster(tokens);
+        let cid = self.create_cluster(tokens);
+        self.clusters[cid.0]
+            .as_ref()
+            .map(|c| c.to_template(self.param_id))
+    }
+    /// Read-only lookup: find the best matching template for a line without
+    /// mutating the matcher.
+    ///
+    /// Returns `None` if no cluster matches.
+    pub fn find(&self, content: &str) -> Option<Template> {
+        let (cluster, _) = self.find_match(content);
+        cluster.map(|c| c.to_template(self.param_id))
     }
     fn add_seq_to_prefix_tree(&mut self, cluster_id: ClusterId) {
         let cluster = self.clusters[cluster_id.0]

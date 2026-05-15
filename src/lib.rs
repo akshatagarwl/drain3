@@ -500,7 +500,12 @@ impl Matcher {
     /// The matcher is not ready for matching until `finalize_training` is
     /// called. Prefer the crate-level constructors [`train`] or
     /// [`matcher_from_templates`] instead.
-    pub(crate) fn new(cfg: Config) -> Self {
+    /// Create a new unfinalized matcher with the given config.
+    ///
+    /// The matcher is not ready for matching until `finalize_training` is
+    /// called. Prefer the crate-level constructors [`train`] or
+    /// [`matcher_from_templates`] for typical use.
+    pub fn new(cfg: Config) -> Self {
         let mut m = Self {
             cfg: cfg.clone(),
             templates: Vec::new(),
@@ -859,7 +864,7 @@ impl Matcher {
     ///
     /// # Panics
     /// Panics if called on a matcher that has already been finalized.
-    pub(crate) fn add_log_message(&mut self, content: &str) {
+    pub fn add_log_message(&mut self, content: &str) {
         let Some(tokens) = self.tokenize_input(content) else {
             return;
         };

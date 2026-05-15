@@ -31,6 +31,7 @@ mod prefilter;
 // ---------------------------------------------------------------------------
 /// All the ways training or template reconstruction can fail.
 #[derive(Debug, Clone, PartialEq)]
+/// Errors that can occur during training or template reconstruction.
 pub enum Error {
     /// Tree depth is below the minimum of 3.
     InvalidDepth { got: usize },
@@ -485,6 +486,10 @@ impl Node {
 // ---------------------------------------------------------------------------
 // Matcher
 // ---------------------------------------------------------------------------
+/// A trained DRAIN matcher. Holds the prefix tree, token dictionary, and
+/// precomputed indices for fast line matching.
+///
+/// Create via [`train`], [`train_with_config`], or [`matcher_from_templates`].
 pub struct Matcher {
     cfg: Config,
     templates: Vec<Template>,
@@ -501,7 +506,12 @@ pub struct Matcher {
     scratch_tok: RefCell<Vec<String>>,
 }
 impl Matcher {
-    pub fn new(cfg: Config) -> Self {
+    /// Create a new matcher with the given config.
+    ///
+    /// The matcher is not ready for matching until `finalize_training` is
+    /// called. Prefer the crate-level constructors [`train`] or
+    /// [`matcher_from_templates`] instead.
+    pub(crate) fn new(cfg: Config) -> Self {
         let mut m = Self {
             cfg: cfg.clone(),
             templates: Vec::new(),
@@ -636,14 +646,15 @@ impl Matcher {
     fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
         // Quick rejection: if no cluster has a param at position 0 and there
         // are no extra delimiters, an unknown first token means no match.
-        if !self.has_param_first
-            && self.cfg.extra_delimiters().is_empty()
-            && let Some(ref dict) = self.dict_frozen
-            && dict
-                .lookup(&line[..line.find(' ').unwrap_or(line.len())])
-                .is_none()
-        {
-            return (None, Vec::new());
+        if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {
+            if let Some(ref dict) = self.dict_frozen {
+                if dict
+                    .lookup(&line[..line.find(' ').unwrap_or(line.len())])
+                    .is_none()
+                {
+                    return (None, Vec::new());
+                }
+            }
         }
         let Some(tokens) = self.tokenize_input(line) else {
             return (None, Vec::new());
@@ -747,15 +758,15 @@ impl Matcher {
                 if c.token_str.len() != n_tokens {
                     continue;
                 }
-                if let Some(a) = c.anchor0
-                    && c.token_str[a] != tokens[a]
-                {
-                    continue;
+                if let Some(a) = c.anchor0 {
+                    if c.token_str[a] != tokens[a] {
+                        continue;
+                    }
                 }
-                if let Some(a) = c.anchor1
-                    && c.token_str[a] != tokens[a]
-                {
-                    continue;
+                if let Some(a) = c.anchor1 {
+                    if c.token_str[a] != tokens[a] {
+                        continue;
+                    }
                 }
                 for &idx in &c.non_param_idx {
                     if Some(idx) == c.anchor0 || Some(idx) == c.anchor1 {
@@ -1179,10 +1190,10 @@ impl RenderPlan {
     pub fn append(&self, dst: &mut Vec<u8>, args: Option<&[&str]>) {
         dst.extend_from_slice(&self.head);
         for seg in &self.segments {
-            if let Some(a) = args
-                && let Some(s) = a.get(seg.arg_idx)
-            {
-                dst.extend_from_slice(s.as_bytes());
+            if let Some(a) = args {
+                if let Some(s) = a.get(seg.arg_idx) {
+                    dst.extend_from_slice(s.as_bytes());
+                }
             }
             dst.extend_from_slice(&seg.tail);
         }

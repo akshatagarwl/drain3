@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use crate::{Cluster, ClusterId, TokenId};
 
+/** Bucket of cluster ids indexed by first / last token for a single token-count
+ *  length. Built once after training, read-only during matching. */
 #[derive(Debug, Default, Clone)]
 pub struct PrefilterBucket {
     pub any: Vec<ClusterId>,
@@ -13,6 +15,9 @@ pub struct PrefilterBucket {
     pub fl_vals: Vec<Vec<ClusterId>>,
 }
 
+/** Rebuild prefilter buckets from the current set of clusters.
+ *
+ *  Called automatically by [`Matcher::finalize_training`][crate::Matcher]. */
 pub fn rebuild_match_prefilter(
     clusters: &[Option<Box<Cluster>>],
     param_id: TokenId,
@@ -101,6 +106,8 @@ pub fn rebuild_match_prefilter(
     buckets
 }
 
+/** Look up candidate cluster ids for a tokenized line using first/last token
+ *  indexes. Returns `None` when no candidates exist. */
 pub fn prefilter_candidates_compact<'a>(
     buckets: &'a [PrefilterBucket],
     dict_ids: &HashMap<String, TokenId>,

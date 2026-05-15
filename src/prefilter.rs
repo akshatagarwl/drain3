@@ -19,7 +19,7 @@ pub struct PrefilterBucket {
  *
  *  Called automatically by [`Matcher::finalize_training`][crate::Matcher]. */
 pub fn rebuild_match_prefilter(
-    clusters: &[Option<Box<Cluster>>],
+    clusters: &[Option<Cluster>],
     param_id: TokenId,
 ) -> Vec<PrefilterBucket> {
     let mut any_by_tc: HashMap<usize, Vec<ClusterId>> = HashMap::new();
@@ -123,10 +123,16 @@ pub fn prefilter_candidates_compact<'a>(
     let mut first_last = &[][..];
 
     if tc > 0 {
-        let first_id = dict_ids.get(&tokens[0]).copied().unwrap_or(TokenId(0));
-        let last_id = dict_ids.get(&tokens[tc - 1]).copied().unwrap_or(TokenId(0));
-        let first_known = first_id != TokenId(0);
-        let last_known = last_id != TokenId(0);
+        let first_id = dict_ids
+            .get(&tokens[0])
+            .copied()
+            .unwrap_or(crate::UNKNOWN_TOKEN_ID);
+        let last_id = dict_ids
+            .get(&tokens[tc - 1])
+            .copied()
+            .unwrap_or(crate::UNKNOWN_TOKEN_ID);
+        let first_known = first_id != crate::UNKNOWN_TOKEN_ID;
+        let last_known = last_id != crate::UNKNOWN_TOKEN_ID;
 
         if first_known {
             first = search_sorted_token_id(&b.first_keys, &b.first_vals, first_id);

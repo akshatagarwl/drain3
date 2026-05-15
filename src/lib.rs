@@ -8,20 +8,82 @@
 //! ```
 //! use drain3::Config;
 //!
+//! # fn main() -> Result<(), drain3::Error> {
 //! let samples: Vec<String> = vec![
 //!     "connection from 10.0.0.1 timeout after 5000ms".into(),
 //!     "connection from 10.0.0.2 timeout after 3000ms".into(),
 //!     "connection from 10.0.0.3 timeout after 1000ms".into(),
 //! ];
-//! let matcher = drain3::train(&samples, Config::default()).unwrap();
+//! let matcher = drain3::train(&samples, Config::default())?;
 //! let (id, args, ok) = matcher.match_line("connection from 192.168.1.1 timeout after 42ms");
 //! assert!(ok);
 //! assert_eq!(args, vec!["192.168.1.1", "42ms"]);
+//! # Ok(())
+//! # }
 //! ```
 use std::cell::RefCell;
 use std::collections::HashMap;
 mod dict;
 mod prefilter;
+
+// ---------------------------------------------------------------------------
+// Error
+// ---------------------------------------------------------------------------
+/// All the ways training or template reconstruction can fail.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Error {
+    /// Tree depth is below the minimum of 3.
+    InvalidDepth { got: usize },
+    /// Similarity threshold is outside [0, 1].
+    InvalidSimilarityThreshold { got: f64 },
+    /// Match threshold is outside [0, 1].
+    InvalidMatchThreshold { got: f64 },
+    /// Max children is below the minimum of 2.
+    InvalidMaxChildren { got: usize },
+    /// Max tokens must be >= 1.
+    InvalidMaxTokens { got: usize },
+    /// Max bytes must be >= 1.
+    InvalidMaxBytes { got: usize },
+    /// Param string was empty.
+    EmptyParamString,
+    /// Template id must be > 0.
+    InvalidTemplateId(usize),
+    /// Duplicate template id encountered.
+    DuplicateTemplateId(usize),
+    /// Template count must be > 0.
+    ZeroCountTemplate(usize),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::InvalidDepth { got } => write!(f, "depth must be >= 3, got {}", got),
+            Error::InvalidSimilarityThreshold { got } => {
+                write!(f, "similarity threshold must be in [0, 1], got {}", got)
+            }
+            Error::InvalidMatchThreshold { got } => {
+                write!(f, "match threshold must be in [0, 1], got {}", got)
+            }
+            Error::InvalidMaxChildren { got } => {
+                write!(f, "max children must be >= 2, got {}", got)
+            }
+            Error::InvalidMaxTokens { got } => {
+                write!(f, "max tokens must be >= 1, got {}", got)
+            }
+            Error::InvalidMaxBytes { got } => {
+                write!(f, "max bytes must be >= 1, got {}", got)
+            }
+            Error::EmptyParamString => write!(f, "param string must not be empty"),
+            Error::InvalidTemplateId(id) => write!(f, "template id must be > 0, got {}", id),
+            Error::DuplicateTemplateId(id) => write!(f, "duplicate template id {}", id),
+            Error::ZeroCountTemplate(id) => {
+                write!(f, "template {} count must be > 0", id)
+            }
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 // ---------------------------------------------------------------------------
 // Internal: strong IDs
@@ -39,29 +101,108 @@ pub(crate) struct ClusterId(pub(crate) usize);
 /// Controls training and matching behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-    /// Prefix tree depth. Must be >= 3.
-    pub depth: usize,
-    /// Fraction of tokens that must match for a line to join a cluster during training.
-    pub similarity_threshold: f64,
-    /// Fraction of tokens that must match for a line to be considered a match.
-    pub match_threshold: f64,
-    /// Max children per inner node. One slot is reserved for the param catch-all.
-    pub max_children: usize,
-    /// Max tokens per line. Lines with more tokens are skipped.
-    pub max_tokens: usize,
-    /// Max bytes per line. Lines longer than this are skipped.
-    pub max_bytes: usize,
-    /// Max clusters. 0 = unlimited.
-    pub max_clusters: usize,
-    /// Placeholder string for param tokens (default: `<*>`).
-    pub param_string: String,
-    /// Whether numeric tokens are automatically parameterized during tree insertion.
-    pub parametrize_numeric_tokens: bool,
-    /// Additional delimiter strings to replace with spaces before tokenization.
-    pub extra_delimiters: Vec<String>,
-    /// Enable the first/last token prefilter optimization for matching.
-    pub enable_match_prefilter: bool,
+    depth: usize,
+    similarity_threshold: f64,
+    match_threshold: f64,
+    max_children: usize,
+    max_tokens: usize,
+    max_bytes: usize,
+    max_clusters: usize,
+    param_string: String,
+    parametrize_numeric_tokens: bool,
+    extra_delimiters: Vec<String>,
+    enable_match_prefilter: bool,
 }
+
+impl Config {
+    /// Prefix tree depth. Must be >= 3.
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+    /// Fraction of tokens that must match for a line to join a cluster during training.
+    pub fn similarity_threshold(&self) -> f64 {
+        self.similarity_threshold
+    }
+    /// Fraction of tokens that must match for a line to be considered a match.
+    pub fn match_threshold(&self) -> f64 {
+        self.match_threshold
+    }
+    /// Max children per inner node. One slot is reserved for the param catch-all.
+    pub fn max_children(&self) -> usize {
+        self.max_children
+    }
+    /// Max tokens per line. Lines with more tokens are skipped.
+    pub fn max_tokens(&self) -> usize {
+        self.max_tokens
+    }
+    /// Max bytes per line. Lines longer than this are skipped.
+    pub fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+    /// Max clusters. 0 = unlimited.
+    pub fn max_clusters(&self) -> usize {
+        self.max_clusters
+    }
+    /// Placeholder string for param tokens.
+    pub fn param_string(&self) -> &str {
+        &self.param_string
+    }
+    /// Whether numeric tokens are automatically parameterized during tree insertion.
+    pub fn parametrize_numeric_tokens(&self) -> bool {
+        self.parametrize_numeric_tokens
+    }
+    /// Additional delimiter strings to replace with spaces before tokenization.
+    pub fn extra_delimiters(&self) -> &[String] {
+        &self.extra_delimiters
+    }
+    /// Enable the first/last token prefilter optimization for matching.
+    pub fn enable_match_prefilter(&self) -> bool {
+        self.enable_match_prefilter
+    }
+
+    fn normalize(&self) -> Result<Self, Error> {
+        if self.depth < 3 {
+            return Err(Error::InvalidDepth { got: self.depth });
+        }
+        if !(0.0..=1.0).contains(&self.similarity_threshold) {
+            return Err(Error::InvalidSimilarityThreshold {
+                got: self.similarity_threshold,
+            });
+        }
+        if !(0.0..=1.0).contains(&self.match_threshold) {
+            return Err(Error::InvalidMatchThreshold {
+                got: self.match_threshold,
+            });
+        }
+        if self.max_children < 2 {
+            return Err(Error::InvalidMaxChildren {
+                got: self.max_children,
+            });
+        }
+        if self.max_tokens < 1 {
+            return Err(Error::InvalidMaxTokens {
+                got: self.max_tokens,
+            });
+        }
+        if self.max_bytes < 1 {
+            return Err(Error::InvalidMaxBytes {
+                got: self.max_bytes,
+            });
+        }
+        if self.param_string.is_empty() {
+            return Err(Error::EmptyParamString);
+        }
+        let mut cfg = self.clone();
+        cfg.extra_delimiters.retain(|d| !d.is_empty());
+        Ok(cfg)
+    }
+
+    /// Return a builder for constructing a validated `Config`.
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::new()
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -79,58 +220,164 @@ impl Default for Config {
         }
     }
 }
-impl Config {
-    fn normalize(&self) -> Result<Self, String> {
-        if self.depth < 3 {
-            return Err(format!("depth must be >= 3, got {}", self.depth));
-        }
-        if !(0.0..=1.0).contains(&self.similarity_threshold) {
-            return Err(format!(
-                "similarity threshold must be in [0, 1], got {}",
-                self.similarity_threshold
-            ));
-        }
-        if !(0.0..=1.0).contains(&self.match_threshold) {
-            return Err(format!(
-                "match threshold must be in [0, 1], got {}",
-                self.match_threshold
-            ));
-        }
-        if self.max_children < 2 {
-            return Err(format!(
-                "max children must be >= 2, got {}",
-                self.max_children
-            ));
-        }
-        if self.max_tokens < 1 {
-            return Err(format!("max tokens must be >= 1, got {}", self.max_tokens));
-        }
-        if self.max_bytes < 1 {
-            return Err(format!("max bytes must be >= 1, got {}", self.max_bytes));
-        }
-        if self.param_string.is_empty() {
-            return Err("param string must not be empty".to_string());
-        }
-        let mut cfg = self.clone();
-        cfg.extra_delimiters.retain(|d| !d.is_empty());
-        Ok(cfg)
+
+/// Fluent builder for `Config`.
+///
+/// # Example
+/// ```
+/// use drain3::Config;
+/// let cfg = Config::builder()
+///     .depth(5)
+///     .similarity_threshold(0.6)
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigBuilder {
+    depth: usize,
+    similarity_threshold: f64,
+    match_threshold: f64,
+    max_children: usize,
+    max_tokens: usize,
+    max_bytes: usize,
+    max_clusters: usize,
+    param_string: String,
+    parametrize_numeric_tokens: bool,
+    extra_delimiters: Vec<String>,
+    enable_match_prefilter: bool,
+}
+
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
+
+impl ConfigBuilder {
+    /// Create a builder with the same defaults as `Config::default()`.
+    pub fn new() -> Self {
+        Self {
+            depth: 4,
+            similarity_threshold: 0.5,
+            match_threshold: 1.0,
+            max_children: 100,
+            max_tokens: 64,
+            max_bytes: 1024,
+            max_clusters: 0,
+            param_string: "<*>".to_string(),
+            parametrize_numeric_tokens: true,
+            extra_delimiters: Vec::new(),
+            enable_match_prefilter: true,
+        }
+    }
+    /// Prefix tree depth. Must be >= 3.
+    pub fn depth(mut self, v: usize) -> Self {
+        self.depth = v;
+        self
+    }
+    /// Fraction of tokens that must match for a line to join a cluster during training.
+    pub fn similarity_threshold(mut self, v: f64) -> Self {
+        self.similarity_threshold = v;
+        self
+    }
+    /// Fraction of tokens that must match for a line to be considered a match.
+    pub fn match_threshold(mut self, v: f64) -> Self {
+        self.match_threshold = v;
+        self
+    }
+    /// Max children per inner node. One slot is reserved for the param catch-all.
+    pub fn max_children(mut self, v: usize) -> Self {
+        self.max_children = v;
+        self
+    }
+    /// Max tokens per line. Lines with more tokens are skipped.
+    pub fn max_tokens(mut self, v: usize) -> Self {
+        self.max_tokens = v;
+        self
+    }
+    /// Max bytes per line. Lines longer than this are skipped.
+    pub fn max_bytes(mut self, v: usize) -> Self {
+        self.max_bytes = v;
+        self
+    }
+    /// Max clusters. 0 = unlimited.
+    pub fn max_clusters(mut self, v: usize) -> Self {
+        self.max_clusters = v;
+        self
+    }
+    /// Placeholder string for param tokens (default: `<*>`).
+    pub fn param_string(mut self, v: impl Into<String>) -> Self {
+        self.param_string = v.into();
+        self
+    }
+    /// Whether numeric tokens are automatically parameterized during tree insertion.
+    pub fn parametrize_numeric_tokens(mut self, v: bool) -> Self {
+        self.parametrize_numeric_tokens = v;
+        self
+    }
+    /// Additional delimiter strings to replace with spaces before tokenization.
+    pub fn extra_delimiters(mut self, v: Vec<String>) -> Self {
+        self.extra_delimiters = v;
+        self
+    }
+    /// Enable the first/last token prefilter optimization for matching.
+    pub fn enable_match_prefilter(mut self, v: bool) -> Self {
+        self.enable_match_prefilter = v;
+        self
+    }
+    /// Build and validate the configuration.
+    pub fn build(self) -> Result<Config, Error> {
+        let cfg = Config {
+            depth: self.depth,
+            similarity_threshold: self.similarity_threshold,
+            match_threshold: self.match_threshold,
+            max_children: self.max_children,
+            max_tokens: self.max_tokens,
+            max_bytes: self.max_bytes,
+            max_clusters: self.max_clusters,
+            param_string: self.param_string,
+            parametrize_numeric_tokens: self.parametrize_numeric_tokens,
+            extra_delimiters: self.extra_delimiters,
+            enable_match_prefilter: self.enable_match_prefilter,
+        };
+        cfg.normalize()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Template
 // ---------------------------------------------------------------------------
 /// A trained log template.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Template {
-    pub id: usize,
+    id: usize,
+    tokens: Vec<String>,
+    params: Vec<bool>,
+    token_count: usize,
+    count: usize,
+}
+
+impl Template {
+    /// Cluster id.
+    pub fn id(&self) -> usize {
+        self.id
+    }
     /// Dense token list: only non-param tokens, in order.
-    pub tokens: Vec<String>,
-    /// Bit i set = position i is a param placeholder.
-    pub params: Vec<bool>,
+    pub fn tokens(&self) -> &[String] {
+        &self.tokens
+    }
+    /// Whether position `idx` is a param placeholder.
+    pub fn is_param(&self, idx: usize) -> bool {
+        self.params.get(idx).copied().unwrap_or(false)
+    }
     /// Total number of positions (len(tokens) + param_count).
-    pub token_count: usize,
+    pub fn token_count(&self) -> usize {
+        self.token_count
+    }
     /// Number of matching log lines.
-    pub count: usize,
+    pub fn count(&self) -> usize {
+        self.count
+    }
 }
 // ---------------------------------------------------------------------------
 // Internal: cluster, node
@@ -270,7 +517,7 @@ impl Matcher {
             has_param_first: false,
             scratch_tok: RefCell::new(Vec::new()),
         };
-        m.param_id = m.intern_token(&cfg.param_string);
+        m.param_id = m.intern_token(cfg.param_string());
         m
     }
     fn freeze_dict(&mut self) {
@@ -278,8 +525,8 @@ impl Matcher {
             self.dict_ids.iter().map(|(k, v)| (k.clone(), *v)).collect();
         self.dict_frozen = Some(dict::FrozenDict::new(entries));
         let mut scratch = self.scratch_tok.borrow_mut();
-        if scratch.capacity() < self.cfg.max_tokens {
-            *scratch = Vec::with_capacity(self.cfg.max_tokens);
+        if scratch.capacity() < self.cfg.max_tokens() {
+            *scratch = Vec::with_capacity(self.cfg.max_tokens());
         }
         self.has_param_first = false;
         for c in self.clusters.iter().filter_map(|c| c.as_ref()) {
@@ -313,7 +560,7 @@ impl Matcher {
         }
     }
     fn required_score(&self, token_count: usize, sim_th: f64) -> usize {
-        if sim_th == self.cfg.match_threshold && token_count < self.match_needed.len() {
+        if sim_th == self.cfg.match_threshold() && token_count < self.match_needed.len() {
             return self.match_needed[token_count];
         }
         (sim_th * token_count as f64).ceil() as usize
@@ -321,21 +568,20 @@ impl Matcher {
     fn rebuild_match_needed(&mut self) {
         self.match_needed.resize(self.root_by_len.len(), 0);
         for tc in 0..self.match_needed.len() {
-            self.match_needed[tc] = (self.cfg.match_threshold * tc as f64).ceil() as usize;
+            self.match_needed[tc] = (self.cfg.match_threshold() * tc as f64).ceil() as usize;
         }
     }
     // ------------------------------------------------------------------
     // Public API
     // ------------------------------------------------------------------
 
-    /// Match a line and return `(template_id, extracted_args, matched)`.
+    /// Match a line. Returns `(template_id, extracted_args, matched)`.
     pub fn match_line(&self, line: &str) -> (usize, Vec<String>, bool) {
         let mut dst = Vec::new();
         let (id, ok) = self.match_into(line, &mut dst);
         (id, dst, ok)
     }
-    /// Match a line, writing extracted args into `dst`.
-    /// Returns `(template_id, matched)`.
+    /// Like `match_line`, but writes extracted args into `dst`.
     pub fn match_into(&self, line: &str, dst: &mut Vec<String>) -> (usize, bool) {
         let (cluster, tokens) = self.find_match(line);
         if let Some(c) = cluster {
@@ -345,7 +591,7 @@ impl Matcher {
         }
         (0, false)
     }
-    /// Match a line and return just the template id, or `None` if no match.
+    /// Match a line, returning only the template id.
     pub fn match_id(&self, line: &str) -> Option<usize> {
         self.find_match(line).0.map(|c| c.id.0)
     }
@@ -359,7 +605,7 @@ impl Matcher {
     pub fn templates(&self) -> Vec<Template> {
         self.templates.clone()
     }
-    /// Return a single template by cluster id, or `None` if not found.
+    /// Template by cluster id.
     pub fn template_for_id(&self, id: usize) -> Option<Template> {
         let c = self.clusters.get(id)?.as_ref()?;
         Some(c.to_template(self.param_id))
@@ -368,20 +614,20 @@ impl Matcher {
     // Internal matching
     // ------------------------------------------------------------------
     fn tokenize_input(&self, content: &str) -> Option<Vec<String>> {
-        if content.len() > self.cfg.max_bytes {
+        if content.len() > self.cfg.max_bytes() {
             return None;
         }
-        if self.cfg.extra_delimiters.is_empty() {
+        if self.cfg.extra_delimiters().is_empty() {
             let mut scratch = self.scratch_tok.borrow_mut();
             scratch.clear();
-            let count = tokenize_whitespace_count(content, &mut scratch, self.cfg.max_tokens);
-            if count == 0 || count > self.cfg.max_tokens {
+            let count = tokenize_whitespace_count(content, &mut scratch, self.cfg.max_tokens());
+            if count == 0 || count > self.cfg.max_tokens() {
                 return None;
             }
             Some(scratch.clone())
         } else {
-            let t = tokenize(content, &self.cfg.extra_delimiters, self.cfg.max_tokens);
-            if t.is_empty() || t.len() > self.cfg.max_tokens {
+            let t = tokenize(content, self.cfg.extra_delimiters(), self.cfg.max_tokens());
+            if t.is_empty() || t.len() > self.cfg.max_tokens() {
                 return None;
             }
             Some(t)
@@ -391,7 +637,7 @@ impl Matcher {
         // Quick rejection: if no cluster has a param at position 0 and there
         // are no extra delimiters, an unknown first token means no match.
         if !self.has_param_first
-            && self.cfg.extra_delimiters.is_empty()
+            && self.cfg.extra_delimiters().is_empty()
             && let Some(ref dict) = self.dict_frozen
             && dict
                 .lookup(&line[..line.find(' ').unwrap_or(line.len())])
@@ -406,7 +652,7 @@ impl Matcher {
         if tc >= self.root_by_len.len() || self.root_by_len[tc].is_none() {
             return (None, tokens);
         }
-        if self.cfg.enable_match_prefilter && tc < self.prefilter_buckets.len() {
+        if self.cfg.enable_match_prefilter() && tc < self.prefilter_buckets.len() {
             let mut candidates = Vec::new();
             if let Some(ids) = prefilter::prefilter_candidates_compact(
                 &self.prefilter_buckets,
@@ -414,12 +660,13 @@ impl Matcher {
                 &tokens,
                 &mut candidates,
             ) {
-                let cluster = self.fast_match_strings(ids, &tokens, self.cfg.match_threshold, true);
+                let cluster =
+                    self.fast_match_strings(ids, &tokens, self.cfg.match_threshold(), true);
                 return (cluster, tokens);
             }
             return (None, tokens);
         }
-        let cluster = self.tree_search_with_threshold(&tokens, self.cfg.match_threshold, true);
+        let cluster = self.tree_search_with_threshold(&tokens, self.cfg.match_threshold(), true);
         (cluster, tokens)
     }
     fn tree_search_with_threshold(
@@ -440,7 +687,7 @@ impl Matcher {
                     .and_then(|c| c.as_ref().map(|b| &**b))
             });
         }
-        let max_depth = self.cfg.depth.saturating_sub(2);
+        let max_depth = self.cfg.depth().saturating_sub(2);
         let mut cur_depth = 1;
         let mut cur_node = root;
         // Use a stack-allocated buffer for small token counts, Vec for larger.
@@ -612,7 +859,7 @@ impl Matcher {
             return;
         }
         if let Some(c) =
-            self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold, false)
+            self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold(), false)
         {
             let cid = c.id;
             let mut changed = false;
@@ -625,7 +872,7 @@ impl Matcher {
                 }
                 if cluster.token_str[i] != *tok {
                     cluster.token_ids[i] = self.param_id;
-                    cluster.token_str[i] = self.cfg.param_string.clone();
+                    cluster.token_str[i] = self.cfg.param_string().to_string();
                     cluster.param_count += 1;
                     changed = true;
                 }
@@ -637,7 +884,7 @@ impl Matcher {
             return;
         }
         // No match — create new cluster
-        if self.cfg.max_clusters > 0 && self.next_cluster.0 > self.cfg.max_clusters {
+        if self.cfg.max_clusters() > 0 && self.next_cluster.0 > self.cfg.max_clusters() {
             return;
         }
         self.create_cluster(tokens);
@@ -663,7 +910,7 @@ impl Matcher {
         let mut cur_ptr: *mut Node = &mut **root;
         let mut cur_depth = 1;
         for (i, &token_id) in cluster.token_ids.iter().enumerate() {
-            if cur_depth >= self.cfg.depth - 2 || cur_depth >= tc {
+            if cur_depth >= self.cfg.depth() - 2 || cur_depth >= tc {
                 // SAFETY: cur_ptr is derived from a mutable borrow of a Box<Node>
                 // stored in root_by_len, which remains alive for this loop.
                 unsafe { (*cur_ptr).cluster_ids.push(cluster_id) };
@@ -676,7 +923,8 @@ impl Matcher {
                 if let Some(n) = (*cur_ptr).children.get_mut(&token_id) {
                     // Exact child exists.
                     &mut **n
-                } else if self.cfg.parametrize_numeric_tokens && has_numbers(&cluster.token_str[i])
+                } else if self.cfg.parametrize_numeric_tokens()
+                    && has_numbers(&cluster.token_str[i])
                 {
                     // Numeric token: always route to wildcard.
                     let entry = (*cur_ptr)
@@ -688,9 +936,9 @@ impl Matcher {
                     // Non-numeric token not yet in tree.
                     let specific_count = (*cur_ptr).children.len();
                     let has_wild = (*cur_ptr).children.contains_key(&self.param_id);
-                    let available = self.cfg.max_children - 1;
+                    let available = self.cfg.max_children() - 1;
                     if specific_count < available
-                        || (!has_wild && specific_count < self.cfg.max_children - 1)
+                        || (!has_wild && specific_count < self.cfg.max_children() - 1)
                     {
                         let entry = (*cur_ptr)
                             .children
@@ -719,7 +967,7 @@ impl Matcher {
             };
             out.push(c.to_template(self.param_id));
         }
-        out.sort_by(|a, b| b.count.cmp(&a.count));
+        out.sort_by_key(|b| std::cmp::Reverse(b.count()));
         self.templates = out;
     }
     fn finalize_training(&mut self) {
@@ -733,11 +981,11 @@ impl Matcher {
 // Training API
 // ---------------------------------------------------------------------------
 /// Train a matcher with default config.
-pub fn train(samples: &[String], cfg: Config) -> Result<Matcher, String> {
+pub fn train(samples: &[String], cfg: Config) -> Result<Matcher, Error> {
     train_with_config(samples, cfg)
 }
 /// Train a matcher with custom config.
-pub fn train_with_config(samples: &[String], cfg: Config) -> Result<Matcher, String> {
+pub fn train_with_config(samples: &[String], cfg: Config) -> Result<Matcher, Error> {
     let norm = cfg.normalize()?;
     let mut m = Matcher::new(norm);
     for sample in samples {
@@ -747,7 +995,7 @@ pub fn train_with_config(samples: &[String], cfg: Config) -> Result<Matcher, Str
     Ok(m)
 }
 /// Rebuild a matcher from pre-existing templates.
-pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Matcher, String> {
+pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Matcher, Error> {
     let norm = cfg.normalize()?;
     let mut m = Matcher::new(norm);
     if templates.is_empty() {
@@ -755,40 +1003,40 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
         return Ok(m);
     }
     let mut sorted: Vec<_> = templates.to_vec();
-    sorted.sort_by_key(|t| t.id);
+    sorted.sort_by_key(|t| t.id());
     let mut seen = std::collections::HashSet::new();
     let mut max_id = 0;
     for t in &sorted {
-        if t.id == 0 {
-            return Err(format!("template id must be > 0, got {}", t.id));
+        if t.id() == 0 {
+            return Err(Error::InvalidTemplateId(t.id()));
         }
-        if !seen.insert(t.id) {
-            return Err(format!("duplicate template id {}", t.id));
+        if !seen.insert(t.id()) {
+            return Err(Error::DuplicateTemplateId(t.id()));
         }
-        if t.count == 0 {
-            return Err(format!("template {} count must be > 0", t.id));
+        if t.count() == 0 {
+            return Err(Error::ZeroCountTemplate(t.id()));
         }
-        if t.id > max_id {
-            max_id = t.id;
+        if t.id() > max_id {
+            max_id = t.id();
         }
     }
     m.clusters.resize_with(max_id + 1, || None);
     m.next_cluster = ClusterId(max_id + 1);
     for t in &sorted {
-        let mut full = vec![String::new(); t.token_count];
+        let mut full = vec![String::new(); t.token_count()];
         let mut dense_idx = 0;
-        for (i, slot) in full.iter_mut().enumerate().take(t.token_count) {
-            if t.params.get(i).copied().unwrap_or(false) {
-                *slot = m.cfg.param_string.clone();
+        for (i, slot) in full.iter_mut().enumerate().take(t.token_count()) {
+            if t.is_param(i) {
+                *slot = m.cfg.param_string().to_string();
             } else {
-                *slot = t.tokens[dense_idx].clone();
+                *slot = t.tokens()[dense_idx].clone();
                 dense_idx += 1;
             }
         }
         let mut token_ids = Vec::new();
         m.intern_token_ids(&full, &mut token_ids);
-        let cl = Box::new(Cluster::new(ClusterId(t.id), full, token_ids, m.param_id));
-        m.clusters[t.id] = Some(cl);
+        let cl = Box::new(Cluster::new(ClusterId(t.id()), full, token_ids, m.param_id));
+        m.clusters[t.id()] = Some(cl);
     }
     for id in 1..m.clusters.len() {
         if m.clusters[id].is_some() {
@@ -881,11 +1129,11 @@ impl RenderPlan {
         let mut tok_idx = 0usize;
         let mut cur: Vec<u8> = Vec::new();
 
-        for i in 0..t.token_count {
+        for i in 0..t.token_count() {
             if i > 0 {
                 cur.push(b' ');
             }
-            if t.params[i] {
+            if t.is_param(i) {
                 if let Some(last) = segments.last_mut() {
                     last.tail = cur;
                 } else {
@@ -898,7 +1146,7 @@ impl RenderPlan {
                 cur = Vec::new();
                 arg_idx += 1;
             } else {
-                cur.extend_from_slice(t.tokens[tok_idx].as_bytes());
+                cur.extend_from_slice(t.tokens()[tok_idx].as_bytes());
                 tok_idx += 1;
             }
         }
@@ -922,15 +1170,12 @@ impl RenderPlan {
         }
     }
 
-    /// Upper-bound size calculated by `new`.
+    /// Upper-bound size.
     pub fn max_size(&self) -> usize {
         self.max_size
     }
 
-    /// Append the rendered template to `dst`.
-    ///
-    /// `args` provides parameter values by position. Missing positions render
-    /// as empty strings.
+    /// Render into `dst`. Missing argument positions render as empty strings.
     pub fn append(&self, dst: &mut Vec<u8>, args: Option<&[&str]>) {
         dst.extend_from_slice(&self.head);
         for seg in &self.segments {
@@ -1009,16 +1254,17 @@ impl SmallRng {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
     /// Expand a dense Template into its full token sequence, inserting
     /// `param_str` at each position marked in `params`.
     fn render_template_placeholders(t: &Template, param_str: &str) -> String {
-        let mut out: Vec<String> = Vec::with_capacity(t.token_count);
+        let mut out: Vec<String> = Vec::with_capacity(t.token_count());
         let mut dense_idx = 0;
-        for i in 0..t.token_count {
-            if t.params.get(i).copied().unwrap_or(false) {
+        for i in 0..t.token_count() {
+            if t.is_param(i) {
                 out.push(param_str.to_string());
             } else {
-                out.push(t.tokens[dense_idx].clone());
+                out.push(t.tokens()[dense_idx].clone());
                 dense_idx += 1;
             }
         }
@@ -1037,10 +1283,10 @@ mod tests {
             "Dec 10 09:12:44 LabSZ sshd[24501]: Failed password for invalid user ftpuser from 0.0.0.0 port 60836 ssh2".into(),
             "Dec 10 07:28:03 LabSZ sshd[24245]: input_userauth_request: invalid user pgadmin [preauth]".into(),
         ];
-        let cfg = Config {
-            similarity_threshold: 0.4, // logpai default
-            ..Config::default()
-        };
+        let cfg = Config::builder()
+            .similarity_threshold(0.4) // logpai default
+            .build()
+            .unwrap();
         let m = train_with_config(&samples, cfg.clone()).unwrap();
         let mut want: HashMap<String, usize> = HashMap::new();
         want.insert(
@@ -1055,9 +1301,9 @@ mod tests {
         let mut got: HashMap<String, usize> = HashMap::new();
         let mut total = 0;
         for tmpl in m.templates() {
-            let key = render_template_placeholders(&tmpl, &cfg.param_string);
-            *got.entry(key).or_insert(0) += tmpl.count;
-            total += tmpl.count;
+            let key = render_template_placeholders(&tmpl, cfg.param_string());
+            *got.entry(key).or_insert(0) += tmpl.count();
+            total += tmpl.count();
         }
         assert_eq!(got, want, "templates mismatch");
         assert_eq!(total, samples.len(), "total count mismatch");
@@ -1072,10 +1318,10 @@ mod tests {
             "Dec 10 09:12:44 LabSZ sshd[24501]: Failed password for invalid user ftpuser from 0.0.0.0 port 60836 ssh2".into(),
             "Dec 10 07:28:03 LabSZ sshd[24245]: input_userauth_request: invalid user pgadmin [preauth]".into(),
         ];
-        let cfg = Config {
-            similarity_threshold: 0.75,
-            ..Config::default()
-        };
+        let cfg = Config::builder()
+            .similarity_threshold(0.75)
+            .build()
+            .unwrap();
         let m = train_with_config(&samples, cfg.clone()).unwrap();
         let mut want: HashMap<String, usize> = HashMap::new();
         want.insert(samples[0].clone(), 1);
@@ -1089,9 +1335,9 @@ mod tests {
         let mut got: HashMap<String, usize> = HashMap::new();
         let mut total = 0;
         for tmpl in m.templates() {
-            let key = render_template_placeholders(&tmpl, &cfg.param_string);
-            *got.entry(key).or_insert(0) += tmpl.count;
-            total += tmpl.count;
+            let key = render_template_placeholders(&tmpl, cfg.param_string());
+            *got.entry(key).or_insert(0) += tmpl.count();
+            total += tmpl.count();
         }
         assert_eq!(got, want, "templates mismatch");
         assert_eq!(total, samples.len(), "total count mismatch");
@@ -1106,7 +1352,7 @@ mod tests {
         let mut got: HashMap<String, usize> = HashMap::new();
         for tmpl in m.templates() {
             let key = render_template_placeholders(&tmpl, "<*>");
-            *got.entry(key).or_insert(0) += tmpl.count;
+            *got.entry(key).or_insert(0) += tmpl.count();
         }
         let mut want: HashMap<String, usize> = HashMap::new();
         want.insert("hello".into(), 2);
@@ -1174,11 +1420,11 @@ mod tests {
     }
     #[test]
     fn zero_thresholds_are_valid() {
-        let cfg = Config {
-            similarity_threshold: 0.0,
-            match_threshold: 0.0,
-            ..Config::default()
-        };
+        let cfg = Config::builder()
+            .similarity_threshold(0.0)
+            .match_threshold(0.0)
+            .build()
+            .unwrap();
         let m = train_with_config(&["A B C".into(), "A B D".into()], cfg).unwrap();
         // MatchThreshold=0.0 accepts any tree-routable candidate.
         assert!(
@@ -1201,20 +1447,14 @@ mod tests {
             "delta X Y".into(),
             "echo X Y".into(),
         ];
-        let cfg = Config {
-            max_clusters: 2,
-            ..Config::default()
-        };
+        let cfg = Config::builder().max_clusters(2).build().unwrap();
         let capped = train_with_config(&lines, cfg.clone()).unwrap();
         assert!(
             capped.templates().len() <= 2,
             "expected at most 2 templates, got {}",
             capped.templates().len()
         );
-        let cfg = Config {
-            max_clusters: 0,
-            ..Config::default()
-        };
+        let cfg = Config::builder().max_clusters(0).build().unwrap();
         let full = train_with_config(&lines, cfg).unwrap();
         assert!(
             full.templates().len() > capped.templates().len(),
@@ -1262,10 +1502,10 @@ mod tests {
     // -----------------------------------------------------------------
     #[test]
     fn extra_delimiters() {
-        let cfg = Config {
-            extra_delimiters: vec!["=".into()],
-            ..Config::default()
-        };
+        let cfg = Config::builder()
+            .extra_delimiters(vec!["=".into()])
+            .build()
+            .unwrap();
         let m = train_with_config(&["k=v a=1".into(), "k=v a=2".into()], cfg).unwrap();
         let (id, args, ok) = m.match_line("k=v a=7");
         assert!(ok, "expected match");
@@ -1298,23 +1538,21 @@ mod tests {
     }
     #[test]
     fn config_and_templates_are_copied() {
-        let cfg = Config {
-            extra_delimiters: vec!["=".into()],
-            ..Config::default()
-        };
+        let cfg = Config::builder()
+            .extra_delimiters(vec!["=".into()])
+            .build()
+            .unwrap();
         let m = train_with_config(&["k=v a=1".into(), "k=v a=2".into()], cfg).unwrap();
-        let mut read_cfg = m.config();
-        read_cfg.extra_delimiters[0] = ":".into();
+        let read_cfg = m.config();
         assert_eq!(
-            m.config().extra_delimiters[0],
+            read_cfg.extra_delimiters()[0],
             "=",
             "config getter leaked mutable slice"
         );
-        let mut templates = m.templates();
-        templates[0].tokens[0] = "mutated".into();
-        assert_ne!(
-            templates,
-            m.templates(),
+        let templates = m.templates();
+        assert_eq!(
+            templates[0].tokens()[0],
+            m.templates()[0].tokens()[0],
             "templates getter leaked mutable data"
         );
     }

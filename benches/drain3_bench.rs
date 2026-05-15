@@ -71,7 +71,7 @@ fn bench_drain3(c: &mut Criterion) {
     for i in 0..N_LINES {
         merge_lines.push(formatters[i % formatters.len()](&mut rng));
     }
-    let train_merge: Vec<String> = merge_lines.iter().take(N_LINES / 10).cloned().collect();
+    let train_merge = &merge_lines[..N_LINES / 10];
 
     // -- Fanout workload: many distinct, digit-free first tokens ---------------
     rng = Rng::new(99);
@@ -94,7 +94,7 @@ fn bench_drain3(c: &mut Criterion) {
         let mut group = c.benchmark_group("drain3");
         group.throughput(Throughput::Elements(train_merge.len() as u64));
         group.bench_function("train_merge", |b| {
-            b.iter(|| train(black_box(&train_merge), Config::default()).unwrap());
+            b.iter(|| train(black_box(train_merge), Config::default()).unwrap());
         });
         group.finish();
     }
@@ -110,7 +110,7 @@ fn bench_drain3(c: &mut Criterion) {
     }
 
     // -- Pre-train a matcher for the match_* benchmarks -----------------------
-    let matcher = train(&train_merge, Config::default()).unwrap();
+    let matcher = train(train_merge, Config::default()).unwrap();
 
     // -- match_into (hit path, arg extraction) --------------------------------
     {

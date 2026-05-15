@@ -1,3 +1,5 @@
+use crate::TokenId;
+
 /// Fast read-only token-to-ID lookup table.
 ///
 /// Uses a sorted flat array with binary search.  Faster than `HashMap` for
@@ -6,12 +8,12 @@
 #[derive(Debug, Clone)]
 pub struct FrozenDict {
     keys: Vec<String>,
-    vals: Vec<u64>,
+    vals: Vec<TokenId>,
 }
 
 impl FrozenDict {
     /// Build a frozen dictionary from (key, value) pairs.
-    pub fn new(mut entries: Vec<(String, u64)>) -> Self {
+    pub fn new(mut entries: Vec<(String, TokenId)>) -> Self {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         let mut keys = Vec::with_capacity(entries.len());
         let mut vals = Vec::with_capacity(entries.len());
@@ -23,7 +25,7 @@ impl FrozenDict {
     }
 
     /// Lookup a key.  Returns `Some(id)` if found, `None` otherwise.
-    pub fn lookup(&self, key: &str) -> Option<u64> {
+    pub fn lookup(&self, key: &str) -> Option<TokenId> {
         match self.keys.binary_search_by(|probe| probe.as_str().cmp(key)) {
             Ok(idx) => Some(self.vals[idx]),
             Err(_) => None,

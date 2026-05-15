@@ -1,26 +1,26 @@
 use std::collections::HashMap;
 
-use crate::Cluster;
+use crate::{Cluster, ClusterId, TokenId};
 
 #[derive(Debug, Default, Clone)]
 pub struct PrefilterBucket {
-    pub any: Vec<usize>,
-    pub first_keys: Vec<u64>,
-    pub first_vals: Vec<Vec<usize>>,
-    pub last_keys: Vec<u64>,
-    pub last_vals: Vec<Vec<usize>>,
-    pub fl_keys: Vec<u64>,
-    pub fl_vals: Vec<Vec<usize>>,
+    pub any: Vec<ClusterId>,
+    pub first_keys: Vec<TokenId>,
+    pub first_vals: Vec<Vec<ClusterId>>,
+    pub last_keys: Vec<TokenId>,
+    pub last_vals: Vec<Vec<ClusterId>>,
+    pub fl_keys: Vec<TokenId>,
+    pub fl_vals: Vec<Vec<ClusterId>>,
 }
 
 pub fn rebuild_match_prefilter(
     clusters: &[Option<Box<Cluster>>],
-    param_id: u64,
+    param_id: TokenId,
 ) -> Vec<PrefilterBucket> {
-    let mut any_by_tc: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut first_by_tc: HashMap<usize, HashMap<u64, Vec<usize>>> = HashMap::new();
-    let mut last_by_tc: HashMap<usize, HashMap<u64, Vec<usize>>> = HashMap::new();
-    let mut fl_by_tc: HashMap<usize, HashMap<u64, Vec<usize>>> = HashMap::new();
+    let mut any_by_tc: HashMap<usize, Vec<ClusterId>> = HashMap::new();
+    let mut first_by_tc: HashMap<usize, HashMap<TokenId, Vec<ClusterId>>> = HashMap::new();
+    let mut last_by_tc: HashMap<usize, HashMap<TokenId, Vec<ClusterId>>> = HashMap::new();
+    let mut fl_by_tc: HashMap<usize, HashMap<TokenId, Vec<ClusterId>>> = HashMap::new();
     let mut max_len = 0usize;
 
     for (id, cluster) in clusters.iter().enumerate().skip(1) {
@@ -34,7 +34,7 @@ pub fn rebuild_match_prefilter(
             max_len = token_count;
         }
         if token_count == 0 {
-            any_by_tc.entry(0).or_default().push(id);
+            any_by_tc.entry(0).or_default().push(ClusterId(id));
             continue;
         }
 
@@ -45,7 +45,10 @@ pub fn rebuild_match_prefilter(
 
         match (first_is_param, last_is_param) {
             (true, true) => {
-                any_by_tc.entry(token_count).or_default().push(id);
+                any_by_tc
+                    .entry(token_count)
+                    .or_default()
+                    .push(ClusterId(id));
             }
             (false, true) => {
                 first_by_tc
@@ -53,7 +56,7 @@ pub fn rebuild_match_prefilter(
                     .or_default()
                     .entry(first_id)
                     .or_default()
-                    .push(id);
+                    .push(ClusterId(id));
             }
             (true, false) => {
                 last_by_tc
@@ -61,46 +64,38 @@ pub fn rebuild_match_prefilter(
                     .or_default()
                     .entry(last_id)
                     .or_default()
-                    .push(id);
+                    .push(ClusterId(id));
             }
             (false, false) => {
-                let combined = (first_id << 32) | (last_id & 0xFFFFFFFF);
+                let combined = TokenId((first_id.0 << 32) | (last_id.0 & 0xFFFFFFFF));
                 fl_by_tc
                     .entry(token_count)
                     .or_default()
                     .entry(combined)
                     .or_default()
-                    .push(id);
+                    .push(ClusterId(id));
             }
         }
     }
 
     let mut buckets = vec![PrefilterBucket::default(); max_len + 1];
     for (tc, ids) in any_by_tc {
-        if tc < buckets.len() {
-            buckets[tc].any = ids;
-        }
+        buckets[tc].any = ids;
     }
     for (tc, mm) in first_by_tc {
-        if tc < buckets.len() {
-            let (keys, vals) = sorted_u64_keys(mm);
-            buckets[tc].first_keys = keys;
-            buckets[tc].first_vals = vals;
-        }
+        let (keys, vals) = sorted_token_id_keys(mm);
+        buckets[tc].first_keys = keys;
+        buckets[tc].first_vals = vals;
     }
     for (tc, mm) in last_by_tc {
-        if tc < buckets.len() {
-            let (keys, vals) = sorted_u64_keys(mm);
-            buckets[tc].last_keys = keys;
-            buckets[tc].last_vals = vals;
-        }
+        let (keys, vals) = sorted_token_id_keys(mm);
+        buckets[tc].last_keys = keys;
+        buckets[tc].last_vals = vals;
     }
     for (tc, mm) in fl_by_tc {
-        if tc < buckets.len() {
-            let (keys, vals) = sorted_u64_keys(mm);
-            buckets[tc].fl_keys = keys;
-            buckets[tc].fl_vals = vals;
-        }
+        let (keys, vals) = sorted_token_id_keys(mm);
+        buckets[tc].fl_keys = keys;
+        buckets[tc].fl_vals = vals;
     }
 
     buckets
@@ -108,10 +103,10 @@ pub fn rebuild_match_prefilter(
 
 pub fn prefilter_candidates_compact<'a>(
     buckets: &'a [PrefilterBucket],
-    dict_ids: &HashMap<String, u64>,
+    dict_ids: &HashMap<String, TokenId>,
     tokens: &[String],
-    dst: &'a mut Vec<usize>,
-) -> Option<&'a [usize]> {
+    dst: &'a mut Vec<ClusterId>,
+) -> Option<&'a [ClusterId]> {
     let tc = tokens.len();
     let b = buckets.get(tc)?;
     let any = &b.any[..];
@@ -121,20 +116,20 @@ pub fn prefilter_candidates_compact<'a>(
     let mut first_last = &[][..];
 
     if tc > 0 {
-        let first_id = dict_ids.get(&tokens[0]).copied().unwrap_or(0);
-        let last_id = dict_ids.get(&tokens[tc - 1]).copied().unwrap_or(0);
-        let first_known = first_id != 0;
-        let last_known = last_id != 0;
+        let first_id = dict_ids.get(&tokens[0]).copied().unwrap_or(TokenId(0));
+        let last_id = dict_ids.get(&tokens[tc - 1]).copied().unwrap_or(TokenId(0));
+        let first_known = first_id != TokenId(0);
+        let last_known = last_id != TokenId(0);
 
         if first_known {
-            first = search_sorted_u64(&b.first_keys, &b.first_vals, first_id);
+            first = search_sorted_token_id(&b.first_keys, &b.first_vals, first_id);
         }
         if last_known {
-            last = search_sorted_u64(&b.last_keys, &b.last_vals, last_id);
+            last = search_sorted_token_id(&b.last_keys, &b.last_vals, last_id);
         }
         if first_known && last_known {
-            let combined = (first_id << 32) | (last_id & 0xFFFFFFFF);
-            first_last = search_sorted_u64(&b.fl_keys, &b.fl_vals, combined);
+            let combined = TokenId((first_id.0 << 32) | (last_id.0 & 0xFFFFFFFF));
+            first_last = search_sorted_token_id(&b.fl_keys, &b.fl_vals, combined);
         }
     }
 
@@ -142,14 +137,14 @@ pub fn prefilter_candidates_compact<'a>(
 }
 
 fn merge_prefilter_groups<'a>(
-    any: &'a [usize],
-    first: &'a [usize],
-    last: &'a [usize],
-    first_last: &'a [usize],
-    dst: &'a mut Vec<usize>,
-) -> Option<&'a [usize]> {
+    any: &'a [ClusterId],
+    first: &'a [ClusterId],
+    last: &'a [ClusterId],
+    first_last: &'a [ClusterId],
+    dst: &'a mut Vec<ClusterId>,
+) -> Option<&'a [ClusterId]> {
     let mut non_empty = 0usize;
-    let mut single: Option<&'a [usize]> = None;
+    let mut single: Option<&'a [ClusterId]> = None;
     let mut total = 0usize;
 
     for group in [any, first, last, first_last] {
@@ -177,15 +172,21 @@ fn merge_prefilter_groups<'a>(
     Some(dst)
 }
 
-fn search_sorted_u64<'a>(keys: &'a [u64], vals: &'a [Vec<usize>], target: u64) -> &'a [usize] {
+fn search_sorted_token_id<'a>(
+    keys: &'a [TokenId],
+    vals: &'a [Vec<ClusterId>],
+    target: TokenId,
+) -> &'a [ClusterId] {
     match keys.binary_search(&target) {
         Ok(i) => &vals[i],
         Err(_) => &[],
     }
 }
 
-fn sorted_u64_keys(m: HashMap<u64, Vec<usize>>) -> (Vec<u64>, Vec<Vec<usize>>) {
-    let mut items: Vec<(u64, Vec<usize>)> = m.into_iter().collect();
+fn sorted_token_id_keys(
+    m: HashMap<TokenId, Vec<ClusterId>>,
+) -> (Vec<TokenId>, Vec<Vec<ClusterId>>) {
+    let mut items: Vec<(TokenId, Vec<ClusterId>)> = m.into_iter().collect();
     items.sort_unstable_by_key(|(k, _)| *k);
     let mut keys = Vec::with_capacity(items.len());
     let mut vals = Vec::with_capacity(items.len());

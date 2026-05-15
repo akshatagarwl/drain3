@@ -23,7 +23,7 @@ impl Rng {
 }
 
 // ---------------------------------------------------------------------------
-// Benchmarks ported from AxiomHQ drain3 Go benchmark suite.
+// Benchmarks ported from logpai/Drain3 benchmark suite.
 // ---------------------------------------------------------------------------
 fn bench_drain3(c: &mut Criterion) {
     const N_LINES: usize = 5000;

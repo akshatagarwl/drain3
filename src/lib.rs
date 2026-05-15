@@ -1,6 +1,6 @@
 //! drain3 — fast log template extraction via fixed-depth prefix trees.
 //!
-//! Rust port of Axiom's drain3 (Go). Splits log lines into tokens,
+//! Rust port of [logpai/Drain3](https://github.com/logpai/Drain3). Splits log lines into tokens,
 //! clusters them by a prefix tree keyed on token count, and replaces
 //! variable tokens with a param placeholder (`<*>` by default).
 //!

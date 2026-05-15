@@ -26,9 +26,7 @@ use std::collections::HashMap;
 mod dict;
 mod prefilter;
 
-// ---------------------------------------------------------------------------
 // Error
-// ---------------------------------------------------------------------------
 /// All the ways training or template reconstruction can fail.
 #[derive(Debug, Clone, PartialEq)]
 /// Errors that can occur during training or template reconstruction.
@@ -86,9 +84,7 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-// ---------------------------------------------------------------------------
 // Internal: strong IDs
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct TokenId(pub(crate) u64);
@@ -96,9 +92,7 @@ pub(crate) struct TokenId(pub(crate) u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ClusterId(pub(crate) usize);
 
-// ---------------------------------------------------------------------------
 // Config
-// ---------------------------------------------------------------------------
 /// Controls training and matching behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -345,9 +339,7 @@ impl ConfigBuilder {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Template
-// ---------------------------------------------------------------------------
 /// A trained log template.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Template {
@@ -380,9 +372,7 @@ impl Template {
         self.count
     }
 }
-// ---------------------------------------------------------------------------
 // Internal: cluster, node
-// ---------------------------------------------------------------------------
 pub(crate) struct Cluster {
     id: ClusterId,
     size: usize,
@@ -483,9 +473,7 @@ impl Node {
         }
     }
 }
-// ---------------------------------------------------------------------------
 // Matcher
-// ---------------------------------------------------------------------------
 /// A trained DRAIN matcher. Holds the prefix tree, token dictionary, and
 /// precomputed indices for fast line matching.
 ///
@@ -987,9 +975,7 @@ impl Matcher {
         self.freeze_dict();
     }
 }
-// ---------------------------------------------------------------------------
 // Training API
-// ---------------------------------------------------------------------------
 /// Train a matcher with default config.
 pub fn train(samples: &[String], cfg: Config) -> Result<Matcher, Error> {
     train_with_config(samples, cfg)
@@ -1056,9 +1042,7 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
     m.finalize_training();
     Ok(m)
 }
-// ---------------------------------------------------------------------------
 // Tokenization helpers
-// ---------------------------------------------------------------------------
 /// Single-pass tokenizer that splits on individual space characters.
 /// Does **not** trim and **does** preserve empty tokens, matching Go's
 /// `tokenizeWhitespaceCount` so that consecutive spaces increase the token
@@ -1109,9 +1093,7 @@ fn has_numbers(s: &str) -> bool {
     s.bytes().any(|b| b.is_ascii_digit())
 }
 
-// ---------------------------------------------------------------------------
 // RenderPlan
-// ---------------------------------------------------------------------------
 
 /// Precomputed recipe for rendering a template with supplied parameter values.
 #[derive(Debug, Clone)]
@@ -1199,9 +1181,7 @@ impl RenderPlan {
     }
 }
 
-// ---------------------------------------------------------------------------
 // StrideSample
-// ---------------------------------------------------------------------------
 
 /// Deterministically sample `frac * len(lines)` lines as fixed-size blocks at
 /// regular strides with random jitter inside each stride window.

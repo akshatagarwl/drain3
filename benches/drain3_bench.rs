@@ -1,9 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use drain3::{train, Config};
 
-// ---------------------------------------------------------------------------
 // Tiny deterministic LCG so we don't need an extra rand dependency.
-// ---------------------------------------------------------------------------
 struct Rng(u64);
 
 impl Rng {
@@ -22,9 +20,7 @@ impl Rng {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Benchmarks ported from logpai/Drain3 benchmark suite.
-// ---------------------------------------------------------------------------
 fn bench_drain3(c: &mut Criterion) {
     const N_LINES: usize = 5000;
     let mut rng = Rng::new(99);

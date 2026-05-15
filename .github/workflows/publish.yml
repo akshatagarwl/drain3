@@ -1,0 +1,13 @@
+name: Publish
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --release --locked
+      - run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

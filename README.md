@@ -2,7 +2,7 @@
 
 Fast log template extraction via fixed-depth prefix trees.
 
-Rust port of [Axiom's drain3](https://github.com/axiomhq/drain3) (Go). Splits log lines into tokens, clusters them by a prefix tree keyed on token count, and replaces variable tokens with a param placeholder (`<*>`` by default).
+Rust port of [Axiom's drain3](https://github.com/axiomhq/drain3) (Go). Splits log lines into tokens, clusters them by a prefix tree keyed on token count, and replaces variable tokens with a param placeholder (`<*> by default).
 
 ## Usage
 

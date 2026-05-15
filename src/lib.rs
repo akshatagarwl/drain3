@@ -2,7 +2,7 @@
 //!
 //! Rust port of Axiom's drain3 (Go). Splits log lines into tokens,
 //! clusters them by a prefix tree keyed on token count, and replaces
-//! variable tokens with a param placeholder (`<*>`` by default).
+//! variable tokens with a param placeholder (`<*>` by default).
 //!
 //! # Example
 //! ```

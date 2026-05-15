@@ -2,7 +2,7 @@
 name = "drain3"
 version = "0.1.0"
 edition = "2024"
-authors = ["Akshat Agarwal <akshat@example.com>"]
+authors = ["Akshat Agarwal <hey@akshat.dev>"]
 description = "Fast log template extraction via fixed-depth prefix trees (Rust port of Axiom's drain3)"
 license = "Apache-2.0"
 repository = "https://github.com/akshatagarwl/drain3"

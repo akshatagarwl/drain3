@@ -919,8 +919,8 @@ impl Matcher {
             return;
         }
         let mut cur_ptr: *mut Node = &mut **root;
-        let mut cur_depth = 1;
         for (i, &token_id) in cluster.token_ids.iter().enumerate() {
+            let cur_depth = i + 1;
             if cur_depth >= self.cfg.depth() - 2 || cur_depth >= tc {
                 // SAFETY: cur_ptr is derived from a mutable borrow of a Box<Node>
                 // stored in root_by_len, which remains alive for this loop.
@@ -966,7 +966,6 @@ impl Matcher {
                 }
             };
             cur_ptr = next_ptr;
-            cur_depth += 1;
         }
     }
     fn sync_templates_from_clusters(&mut self) {

@@ -276,7 +276,12 @@ impl Cluster {
             }
         }
         self.anchor0 = self.non_param_idx.first().copied();
-        self.anchor1 = self.non_param_idx.last().copied();
+        // anchor1 = last only when distinct from anchor0 (i.e., >= 2 non-param tokens)
+        self.anchor1 = if self.non_param_idx.len() >= 2 {
+            self.non_param_idx.last().copied()
+        } else {
+            None
+        };
     }
     fn extract_args_into(&self, line_tokens: &[String], param_id: TokenId, dst: &mut Vec<String>) {
         if self.token_ids.is_empty() || line_tokens.is_empty() || self.param_count == 0 {

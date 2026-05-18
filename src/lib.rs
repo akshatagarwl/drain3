@@ -650,7 +650,7 @@ impl Matcher {
                 }
                 remaining -= 1;
                 if sim_tokens + remaining < needed {
-                    continue;
+                    break;
                 }
             }
             if sim_tokens as isize > max_score

@@ -1,5 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use drain3::{train, Config};
+use std::sync::Arc;
+use std::thread;
 
 // Tiny deterministic LCG so we don't need an extra rand dependency.
 struct Rng(u64);
@@ -218,6 +220,39 @@ fn bench_drain3(c: &mut Criterion) {
                 black_box(matched)
             });
         });
+        group.finish();
+    }
+
+    // -- concurrent_match (multi-threaded find() calls) --------------------------
+    {
+        let matcher_arc = Arc::new(train(train_merge, Config::default()).unwrap());
+        let lines_arc = Arc::new(merge_lines.clone());
+        let mut group = c.benchmark_group("concurrent_match");
+        for n_threads in [1usize, 2, 4] {
+            group.throughput(Throughput::Elements((n_threads * 1000) as u64));
+            group.bench_function(format!("{}t", n_threads), |b| {
+                b.iter(|| {
+                    let handles: Vec<_> = (0..n_threads)
+                        .map(|_| {
+                            let m = matcher_arc.clone();
+                            let lines = lines_arc.clone();
+                            thread::spawn(move || {
+                                let mut matched = 0usize;
+                                for line in lines.iter() {
+                                    if m.find(line).is_some() {
+                                        matched += 1;
+                                    }
+                                }
+                                black_box(matched)
+                            })
+                        })
+                        .collect();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                });
+            });
+        }
         group.finish();
     }
 }

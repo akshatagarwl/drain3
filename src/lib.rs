@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! drain3 — fast log template extraction via fixed-depth prefix trees.
 //!
 //! Rust port of [logpai/Drain3](https://github.com/logpai/Drain3). Splits log lines into tokens,
@@ -5,7 +7,6 @@
 //! variable tokens with a param placeholder (`<*>` by default).
 //!
 //! # Example
-#![forbid(unsafe_code)]
 //! ```
 //! use drain3::Config;
 //!

@@ -325,3 +325,31 @@ fn config_and_templates_are_copied() {
         "templates getter leaked mutable data"
     );
 }
+
+#[test]
+fn concurrent_find_is_sync_safe() {
+    use std::sync::Arc;
+    use std::thread;
+    let m = train(
+        &["alpha 123".into(), "beta 456".into(), "gamma 789".into()],
+        Config::default(),
+    )
+    .unwrap();
+    let m = Arc::new(m);
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let m = Arc::clone(&m);
+            thread::spawn(move || {
+                for _ in 0..1000 {
+                    m.find("alpha 999");
+                    m.find("beta 888");
+                    m.find("gamma 777");
+                    m.find("delta 666");
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+}

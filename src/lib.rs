@@ -24,7 +24,6 @@
 //! # }
 //! ```
 use snafu::Snafu;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use string_interner::backend::BucketBackend;
 use string_interner::StringInterner;
@@ -358,7 +357,6 @@ pub struct Matcher {
     min_match_scores: Vec<usize>,
     prefilter_buckets: Vec<prefilter::PrefilterBucket>,
     has_param_first: bool,
-    token_buf: RefCell<Vec<String>>,
     interner: StringInterner<BucketBackend<usize>>,
     id_to_string: Vec<String>,
 }
@@ -382,7 +380,6 @@ impl Matcher {
             min_match_scores: Vec::new(),
             prefilter_buckets: Vec::new(),
             has_param_first: false,
-            token_buf: RefCell::new(Vec::new()),
             interner: StringInterner::new(),
             id_to_string: vec![String::new()], // index 0 = empty string placeholder
         };
@@ -465,8 +462,7 @@ impl Matcher {
             return None;
         }
         if self.cfg.extra_delimiters().is_empty() {
-            let mut buf = self.token_buf.borrow_mut();
-            buf.clear();
+            let mut buf = Vec::new();
             let count = tokenize_whitespace_count(content, &mut buf, self.cfg.max_tokens());
             if count == 0 || count > self.cfg.max_tokens() {
                 return None;

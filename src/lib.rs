@@ -26,6 +26,8 @@
 use snafu::Snafu;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use string_interner::backend::BucketBackend;
+use string_interner::StringInterner;
 
 mod prefilter;
 
@@ -307,7 +309,7 @@ impl Cluster {
             }
         }
     }
-    fn to_template(&self, param_id: TokenId) -> Template {
+    fn to_template(&self, id_to_string: &[String], param_id: TokenId) -> Template {
         let token_count = self.token_ids.len();
         let mut params = vec![false; token_count];
         let mut dense = Vec::with_capacity(token_count - self.param_count);
@@ -315,7 +317,7 @@ impl Cluster {
             if tid == param_id {
                 params[i] = true;
             } else {
-                dense.push(self.token_str[i].clone());
+                dense.push(id_to_string[tid.0 as usize].clone());
             }
         }
         Template {
@@ -357,6 +359,8 @@ pub struct Matcher {
     prefilter_buckets: Vec<prefilter::PrefilterBucket>,
     has_param_first: bool,
     token_buf: RefCell<Vec<String>>,
+    interner: StringInterner<BucketBackend<usize>>,
+    id_to_string: Vec<String>,
 }
 impl Matcher {
     /// Create a new unfinalized matcher with the given config.
@@ -379,6 +383,8 @@ impl Matcher {
             prefilter_buckets: Vec::new(),
             has_param_first: false,
             token_buf: RefCell::new(Vec::new()),
+            interner: StringInterner::new(),
+            id_to_string: vec![String::new()], // index 0 = empty string placeholder
         };
         m.param_id = m.intern_token(cfg.param_string());
         m
@@ -392,6 +398,10 @@ impl Matcher {
         }
         let id = self.next_token_id;
         self.next_token_id = TokenId(self.next_token_id.0 + 1);
+        // Intern the string for deduplication
+        self.interner.get_or_intern(token);
+        // Store the string for reverse lookup
+        self.id_to_string.push(token.to_string());
         self.dict.insert(token.to_string(), id);
         id
     }
@@ -448,7 +458,7 @@ impl Matcher {
     /// Template by cluster id.
     pub fn template_for_id(&self, id: usize) -> Option<Template> {
         let c = self.clusters.get(id)?.as_ref()?;
-        Some(c.to_template(self.param_id))
+        Some(c.to_template(&self.id_to_string, self.param_id))
     }
     fn tokenize_input(&self, content: &str) -> Option<Vec<String>> {
         if content.len() > self.cfg.max_bytes() {
@@ -692,7 +702,7 @@ impl Matcher {
             return Ok(self.clusters[cid.0]
                 .as_ref()
                 .expect("cluster was just created")
-                .to_template(self.param_id));
+                .to_template(&self.id_to_string, self.param_id));
         }
         if let Some(c) =
             self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold(), false)
@@ -717,7 +727,7 @@ impl Matcher {
                 cluster.rebuild_non_param_idx(self.param_id);
             }
             cluster.count += 1;
-            return Ok(cluster.to_template(self.param_id));
+            return Ok(cluster.to_template(&self.id_to_string, self.param_id));
         }
         if self.cfg.max_clusters() > 0 && self.next_cluster_id.0 > self.cfg.max_clusters() {
             return Err(Error::MaxClustersReached {
@@ -728,7 +738,7 @@ impl Matcher {
         Ok(self.clusters[cid.0]
             .as_ref()
             .expect("cluster was just created")
-            .to_template(self.param_id))
+            .to_template(&self.id_to_string, self.param_id))
     }
     /// Read-only lookup: find the best matching template for a line without
     /// mutating the matcher.
@@ -736,7 +746,7 @@ impl Matcher {
     /// Returns `None` if no cluster matches.
     pub fn find(&self, content: &str) -> Option<Template> {
         let (cluster, _) = self.find_match(content);
-        cluster.map(|c| c.to_template(self.param_id))
+        cluster.map(|c| c.to_template(&self.id_to_string, self.param_id))
     }
     fn add_seq_to_prefix_tree(&mut self, cluster_id: ClusterId) -> Result<(), Error> {
         let cluster = self.clusters[cluster_id.0]
@@ -799,7 +809,7 @@ impl Matcher {
             let Some(c) = self.clusters[id].as_ref() else {
                 continue;
             };
-            out.push(c.to_template(self.param_id));
+            out.push(c.to_template(&self.id_to_string, self.param_id));
         }
         out.sort_by_key(|b| std::cmp::Reverse(b.count()));
         self.templates = out;

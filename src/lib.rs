@@ -471,14 +471,12 @@ impl Matcher {
         }
     }
     fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
-        if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {
-            if self
+        if !self.has_param_first && self.cfg.extra_delimiters().is_empty()
+            && !self
                 .dict
-                .get(&line[..line.find(' ').unwrap_or(line.len())])
-                .is_none()
-            {
-                return (None, Vec::new());
-            }
+                .contains_key(&line[..line.find(' ').unwrap_or(line.len())])
+        {
+            return (None, Vec::new());
         }
         let Some(tokens) = self.tokenize_input(line) else {
             return (None, Vec::new());
@@ -687,7 +685,7 @@ impl Matcher {
     /// internal error occurs.
     pub fn add_log_message(&mut self, content: &str) -> Result<Template, Error> {
         let tokens = self.tokenize_input(content)
-            .ok_or_else(|| Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes() })?;
+            .ok_or(Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes() })?;
         let tc = tokens.len();
         if tc >= self.root_by_len.len() {
             let cid = self.create_cluster(tokens)?;
@@ -703,7 +701,7 @@ impl Matcher {
             let mut changed = false;
             let cluster = self.clusters[cid.0]
                 .as_mut()
-                .ok_or_else(|| Error::ClusterNotFound { id: cid.0 })?;
+                .ok_or(Error::ClusterNotFound { id: cid.0 })?;
             for (i, tok) in tokens.iter().enumerate().take(cluster.token_str.len()) {
                 if cluster.token_ids[i] == self.param_id {
                     continue;
@@ -743,7 +741,7 @@ impl Matcher {
     fn add_seq_to_prefix_tree(&mut self, cluster_id: ClusterId) -> Result<(), Error> {
         let cluster = self.clusters[cluster_id.0]
             .as_ref()
-            .ok_or_else(|| Error::ClusterNotFound { id: cluster_id.0 })?;
+            .ok_or(Error::ClusterNotFound { id: cluster_id.0 })?;
         let tc = cluster.token_ids.len();
         if tc >= self.root_by_len.len() {
             self.root_by_len.resize_with(tc + 1, || None);
@@ -754,7 +752,7 @@ impl Matcher {
             self.root_by_len[tc] = Some(idx);
         }
         let mut cur_idx = self.root_by_len[tc]
-            .ok_or_else(|| Error::InternalRootNotInitialized { token_count: tc })?;
+            .ok_or(Error::InternalRootNotInitialized { token_count: tc })?;
         if tc == 0 {
             self.nodes[cur_idx].cluster_ids.push(cluster_id);
             return Ok(());

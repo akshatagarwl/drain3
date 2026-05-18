@@ -349,15 +349,14 @@ pub struct Matcher {
     nodes: Vec<Node>,
     root_by_len: Vec<Option<usize>>,
     clusters: Vec<Option<Cluster>>,
-    dict_ids: HashMap<String, TokenId>,
-    dict_next_id: TokenId,
+    dict: HashMap<String, TokenId>,
+    next_token_id: TokenId,
     param_id: TokenId,
-    next_cluster: ClusterId,
-    match_needed: Vec<usize>,
+    next_cluster_id: ClusterId,
+    min_match_scores: Vec<usize>,
     prefilter_buckets: Vec<prefilter::PrefilterBucket>,
-    dict_frozen: Option<HashMap<String, TokenId>>,
     has_param_first: bool,
-    scratch_tok: RefCell<Vec<String>>,
+    token_buf: RefCell<Vec<String>>,
 }
 impl Matcher {
     /// Create a new unfinalized matcher with the given config.
@@ -372,49 +371,28 @@ impl Matcher {
             nodes: Vec::new(),
             root_by_len: Vec::new(),
             clusters: vec![None], // 0 is sentinel
-            dict_ids: HashMap::new(),
-            dict_next_id: TokenId(1),
+            dict: HashMap::new(),
+            next_token_id: TokenId(1),
             param_id: TokenId(0),
-            next_cluster: ClusterId(1),
-            match_needed: Vec::new(),
+            next_cluster_id: ClusterId(1),
+            min_match_scores: Vec::new(),
             prefilter_buckets: Vec::new(),
-            dict_frozen: None,
             has_param_first: false,
-            scratch_tok: RefCell::new(Vec::new()),
+            token_buf: RefCell::new(Vec::new()),
         };
         m.param_id = m.intern_token(cfg.param_string());
         m
     }
-    fn freeze_dict(&mut self) {
-        let entries: Vec<(String, TokenId)> =
-            self.dict_ids.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        self.dict_frozen = Some(entries.into_iter().collect());
-        let mut scratch = self.scratch_tok.borrow_mut();
-        if scratch.capacity() < self.cfg.max_tokens() {
-            *scratch = Vec::with_capacity(self.cfg.max_tokens());
-        }
-        self.has_param_first = false;
-        for c in self.clusters.iter().filter_map(|c| c.as_ref()) {
-            if !c.token_ids.is_empty() && c.token_ids[0] == self.param_id {
-                self.has_param_first = true;
-                break;
-            }
-        }
-    }
     fn resolve_token_id(&self, token: &str) -> TokenId {
-        if let Some(ref dict) = self.dict_frozen {
-            dict.get(token).copied().unwrap_or(self.param_id)
-        } else {
-            self.dict_ids.get(token).copied().unwrap_or(self.param_id)
-        }
+        self.dict.get(token).copied().unwrap_or(self.param_id)
     }
     fn intern_token(&mut self, token: &str) -> TokenId {
-        if let Some(&id) = self.dict_ids.get(token) {
+        if let Some(&id) = self.dict.get(token) {
             return id;
         }
-        let id = self.dict_next_id;
-        self.dict_next_id = TokenId(self.dict_next_id.0 + 1);
-        self.dict_ids.insert(token.to_string(), id);
+        let id = self.next_token_id;
+        self.next_token_id = TokenId(self.next_token_id.0 + 1);
+        self.dict.insert(token.to_string(), id);
         id
     }
     fn intern_token_ids(&mut self, tokens: &[String], dst: &mut Vec<TokenId>) {
@@ -425,15 +403,15 @@ impl Matcher {
         }
     }
     fn required_score(&self, token_count: usize, sim_th: f64) -> usize {
-        if sim_th == self.cfg.match_threshold() && token_count < self.match_needed.len() {
-            return self.match_needed[token_count];
+        if sim_th == self.cfg.match_threshold() && token_count < self.min_match_scores.len() {
+            return self.min_match_scores[token_count];
         }
         (sim_th * token_count as f64).ceil() as usize
     }
-    fn rebuild_match_needed(&mut self) {
-        self.match_needed.resize(self.root_by_len.len(), 0);
-        for tc in 0..self.match_needed.len() {
-            self.match_needed[tc] = (self.cfg.match_threshold() * tc as f64).ceil() as usize;
+    fn rebuild_min_match_scores(&mut self) {
+        self.min_match_scores.resize(self.root_by_len.len(), 0);
+        for tc in 0..self.min_match_scores.len() {
+            self.min_match_scores[tc] = (self.cfg.match_threshold() * tc as f64).ceil() as usize;
         }
     }
 
@@ -477,13 +455,13 @@ impl Matcher {
             return None;
         }
         if self.cfg.extra_delimiters().is_empty() {
-            let mut scratch = self.scratch_tok.borrow_mut();
-            scratch.clear();
-            let count = tokenize_whitespace_count(content, &mut scratch, self.cfg.max_tokens());
+            let mut buf = self.token_buf.borrow_mut();
+            buf.clear();
+            let count = tokenize_whitespace_count(content, &mut buf, self.cfg.max_tokens());
             if count == 0 || count > self.cfg.max_tokens() {
                 return None;
             }
-            Some(scratch.clone())
+            Some(buf.clone())
         } else {
             let t = tokenize(content, self.cfg.extra_delimiters(), self.cfg.max_tokens());
             if t.is_empty() || t.len() > self.cfg.max_tokens() {
@@ -494,13 +472,12 @@ impl Matcher {
     }
     fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
         if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {
-            if let Some(ref dict) = self.dict_frozen {
-                if dict
-                    .get(&line[..line.find(' ').unwrap_or(line.len())])
-                    .is_none()
-                {
-                    return (None, Vec::new());
-                }
+            if self
+                .dict
+                .get(&line[..line.find(' ').unwrap_or(line.len())])
+                .is_none()
+            {
+                return (None, Vec::new());
             }
         }
         let Some(tokens) = self.tokenize_input(line) else {
@@ -514,7 +491,7 @@ impl Matcher {
             let mut candidates = Vec::new();
             if let Some(ids) = prefilter::prefilter_candidates_compact(
                 &self.prefilter_buckets,
-                &self.dict_ids,
+                &self.dict,
                 &tokens,
                 &mut candidates,
             ) {
@@ -693,8 +670,8 @@ impl Matcher {
     fn create_cluster(&mut self, tokens: Vec<String>) -> Result<ClusterId, Error> {
         let mut token_ids = Vec::new();
         self.intern_token_ids(&tokens, &mut token_ids);
-        let id = self.next_cluster;
-        self.next_cluster = ClusterId(self.next_cluster.0 + 1);
+        let id = self.next_cluster_id;
+        self.next_cluster_id = ClusterId(self.next_cluster_id.0 + 1);
         let cl = Cluster::new(id, tokens, token_ids, self.param_id);
         if id.0 >= self.clusters.len() {
             self.clusters.resize_with(id.0 + 1, || None);
@@ -744,7 +721,7 @@ impl Matcher {
             cluster.count += 1;
             return Ok(cluster.to_template(self.param_id));
         }
-        if self.cfg.max_clusters() > 0 && self.next_cluster.0 > self.cfg.max_clusters() {
+        if self.cfg.max_clusters() > 0 && self.next_cluster_id.0 > self.cfg.max_clusters() {
             return Err(Error::MaxClustersReached {
                 limit: self.cfg.max_clusters(),
             });
@@ -831,9 +808,8 @@ impl Matcher {
     }
     fn finalize_training(&mut self) {
         self.sync_templates_from_clusters();
-        self.rebuild_match_needed();
+        self.rebuild_min_match_scores();
         self.prefilter_buckets = prefilter::rebuild_match_prefilter(&self.clusters, self.param_id);
-        self.freeze_dict();
     }
 }
 /// Train a matcher with the provided config.
@@ -873,7 +849,7 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
         }
     }
     m.clusters.resize_with(max_id + 1, || None);
-    m.next_cluster = ClusterId(max_id + 1);
+    m.next_cluster_id = ClusterId(max_id + 1);
     for t in &sorted {
         let mut full = vec![String::new(); t.token_count()];
         let mut dense_idx = 0;

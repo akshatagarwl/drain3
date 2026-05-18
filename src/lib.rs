@@ -61,6 +61,18 @@ pub enum Error {
     /// Template count must be > 0.
     #[snafu(display("template {id} count must be > 0"))]
     ZeroCountTemplate { id: usize },
+    /// Internal error: cluster not found (programming bug).
+    #[snafu(display("internal error: cluster {id} not found"))]
+    ClusterNotFound { id: usize },
+    /// Internal error: root node not initialized for token count.
+    #[snafu(display("internal error: root not initialized for token count {token_count}"))]
+    InternalRootNotInitialized { token_count: usize },
+    /// Max clusters reached during training.
+    #[snafu(display("max clusters {limit} reached"))]
+    MaxClustersReached { limit: usize },
+    /// Line exceeds max_bytes configuration.
+    #[snafu(display("line too long: {length} bytes (max: {max_bytes})"))]
+    LineTooLong { length: usize, max_bytes: usize },
 }
 
 /// Sentinel for tokens that are not present in the dictionary.
@@ -693,7 +705,7 @@ impl Matcher {
     // ------------------------------------------------------------------
     // Training
     // ------------------------------------------------------------------
-    fn create_cluster(&mut self, tokens: Vec<String>) -> ClusterId {
+    fn create_cluster(&mut self, tokens: Vec<String>) -> Result<ClusterId, Error> {
         let mut token_ids = Vec::new();
         self.intern_token_ids(&tokens, &mut token_ids);
         let id = self.next_cluster;
@@ -703,26 +715,25 @@ impl Matcher {
             self.clusters.resize_with(id.0 + 1, || None);
         }
         self.clusters[id.0] = Some(cl);
-        self.add_seq_to_prefix_tree(id);
-        id
+        self.add_seq_to_prefix_tree(id)?;
+        Ok(id)
     }
     /// Add a single log line to an unfinalized matcher.
     ///
     /// Returns the [`Template`] for the matched or newly created cluster.
-    /// Returns `None` if the line is rejected (too long, too many tokens, or
-    /// max clusters reached).
-    ///
-    /// # Panics
-    /// Panics if called on a matcher that has already been finalized.
-    pub fn add_log_message(&mut self, content: &str) -> Option<Template> {
-        let tokens = self.tokenize_input(content)?;
+    /// Returns an error if the line is too long, has too many tokens, or an
+    /// internal error occurs.
+    pub fn add_log_message(&mut self, content: &str) -> Result<Template, Error> {
+        let tokens = self.tokenize_input(content)
+            .ok_or_else(|| Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes() })?;
         let tc = tokens.len();
         if tc >= self.root_by_len.len() {
             // First log with this token count: create cluster + tree path.
-            let cid = self.create_cluster(tokens);
-            return self.clusters[cid.0]
+            let cid = self.create_cluster(tokens)?;
+            return Ok(self.clusters[cid.0]
                 .as_ref()
-                .map(|c| c.to_template(self.param_id));
+                .expect("cluster was just created")
+                .to_template(self.param_id));
         }
         if let Some(c) =
             self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold(), false)
@@ -731,7 +742,7 @@ impl Matcher {
             let mut changed = false;
             let cluster = self.clusters[cid.0]
                 .as_mut()
-                .expect("cluster was just found via tree search");
+                .ok_or_else(|| Error::ClusterNotFound { id: cid.0 })?;
             for (i, tok) in tokens.iter().enumerate().take(cluster.token_str.len()) {
                 if cluster.token_ids[i] == self.param_id {
                     continue;
@@ -747,16 +758,19 @@ impl Matcher {
                 cluster.rebuild_non_param_idx(self.param_id);
             }
             cluster.count += 1;
-            return Some(cluster.to_template(self.param_id));
+            return Ok(cluster.to_template(self.param_id));
         }
         // No match — create new cluster
         if self.cfg.max_clusters() > 0 && self.next_cluster.0 > self.cfg.max_clusters() {
-            return None;
+            return Err(Error::MaxClustersReached {
+                limit: self.cfg.max_clusters(),
+            });
         }
-        let cid = self.create_cluster(tokens);
-        self.clusters[cid.0]
+        let cid = self.create_cluster(tokens)?;
+        Ok(self.clusters[cid.0]
             .as_ref()
-            .map(|c| c.to_template(self.param_id))
+            .expect("cluster was just created")
+            .to_template(self.param_id))
     }
     /// Read-only lookup: find the best matching template for a line without
     /// mutating the matcher.
@@ -766,10 +780,10 @@ impl Matcher {
         let (cluster, _) = self.find_match(content);
         cluster.map(|c| c.to_template(self.param_id))
     }
-    fn add_seq_to_prefix_tree(&mut self, cluster_id: ClusterId) {
+    fn add_seq_to_prefix_tree(&mut self, cluster_id: ClusterId) -> Result<(), Error> {
         let cluster = self.clusters[cluster_id.0]
             .as_ref()
-            .expect("cluster exists by construction");
+            .ok_or_else(|| Error::ClusterNotFound { id: cluster_id.0 })?;
         let tc = cluster.token_ids.len();
         if tc >= self.root_by_len.len() {
             self.root_by_len.resize_with(tc + 1, || None);
@@ -779,10 +793,11 @@ impl Matcher {
             self.nodes.push(Node::new());
             self.root_by_len[tc] = Some(idx);
         }
-        let mut cur_idx = self.root_by_len[tc].expect("root was just created if missing");
+        let mut cur_idx = self.root_by_len[tc]
+            .ok_or_else(|| Error::InternalRootNotInitialized { token_count: tc })?;
         if tc == 0 {
             self.nodes[cur_idx].cluster_ids.push(cluster_id);
-            return;
+            return Ok(());
         }
         for (i, &token_id) in cluster.token_ids.iter().enumerate() {
             let cur_depth = i + 1;
@@ -818,6 +833,7 @@ impl Matcher {
             }
             cur_idx = self.nodes[cur_idx].children[&key];
         }
+        Ok(())
     }
     fn sync_templates_from_clusters(&mut self) {
         let mut out: Vec<Template> = Vec::with_capacity(self.clusters.len().saturating_sub(1));
@@ -842,7 +858,7 @@ pub fn train(samples: &[String], cfg: Config) -> Result<Matcher, Error> {
     cfg.validate()?;
     let mut m = Matcher::new(cfg);
     for sample in samples {
-        m.add_log_message(sample);
+        m.add_log_message(sample)?;
     }
     m.finalize_training();
     Ok(m)
@@ -893,7 +909,7 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
     }
     for id in 1..m.clusters.len() {
         if m.clusters[id].is_some() {
-            m.add_seq_to_prefix_tree(ClusterId(id));
+            m.add_seq_to_prefix_tree(ClusterId(id))?;
         }
     }
     m.finalize_training();
@@ -1270,20 +1286,22 @@ mod tests {
             "delta X Y".into(),
             "echo X Y".into(),
         ];
+        // When max_clusters is hit, training fails with an error.
         let cfg = Config::builder().max_clusters(2).build();
-        let capped = train(&lines, cfg.clone()).unwrap();
+        let result = train(&lines, cfg);
+        assert!(result.is_err(), "train with max_clusters=2 should fail");
+        let err = match result { Ok(_) => panic!("expected error"), Err(e) => e };
         assert!(
-            capped.templates().len() <= 2,
-            "expected at most 2 templates, got {}",
-            capped.templates().len()
+            matches!(err, Error::MaxClustersReached { .. }),
+            "expected MaxClustersReached"
         );
+        // Uncapped training succeeds and produces more templates.
         let cfg = Config::builder().max_clusters(0).build();
         let full = train(&lines, cfg).unwrap();
         assert!(
-            full.templates().len() > capped.templates().len(),
-            "expected uncapped training to produce more templates: uncapped={} capped={}",
-            full.templates().len(),
-            capped.templates().len()
+            full.templates().len() > 2,
+            "expected uncapped training to produce more than 2 templates: {}",
+            full.templates().len()
         );
     }
     // -----------------------------------------------------------------

@@ -1,5 +1,9 @@
 # drain3
 
+[![docs.rs](https://docs.rs/drain3/badge.svg)](https://docs.rs/drain3)
+[![crates.io](https://img.shields.io/crates/v/drain3.svg)](https://crates.io/crates/drain3)
+![License](https://img.shields.io/crates/l/drain3.svg)
+
 Fast log template extraction via fixed-depth prefix trees.
 
 Rust port of [logpai/Drain3](https://github.com/logpai/Drain3). Splits log lines into tokens, clusters them by a prefix tree keyed on token count, and replaces variable tokens with a param placeholder (`<*>` by default).
@@ -26,7 +30,7 @@ Key optimizations ported from the Go implementation:
 
 - **First/last token prefilter** — bypasses tree descent for matching via binary-search lookups (3–5× speedup on typical workloads)
 - **Frozen dictionary** — read-only sorted-array token→ID map replaces HashMap on the match path
-- **hasParamFirst quick rejection** — instantly rejects lines with unknown first tokens without tokenization
+- **has_param_first quick rejection** — instantly rejects lines with unknown first tokens without tokenization
 - **Anchor checks** — rejects non-matching candidates in 2 comparisons
 - **Scratch buffer reuse** — tokenization buffer reused across calls
 

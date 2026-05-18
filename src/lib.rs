@@ -289,7 +289,6 @@ impl Cluster {
             }
         }
         self.anchor0 = self.non_param_idx.first().copied();
-        // anchor1 = last only when distinct from anchor0 (i.e., >= 2 non-param tokens)
         self.anchor1 = if self.non_param_idx.len() >= 2 {
             self.non_param_idx.last().copied()
         } else {
@@ -437,9 +436,6 @@ impl Matcher {
             self.match_needed[tc] = (self.cfg.match_threshold() * tc as f64).ceil() as usize;
         }
     }
-    // ------------------------------------------------------------------
-    // Public API
-    // ------------------------------------------------------------------
 
     /// Match a line. Returns `(template_id, extracted_args, matched)`.
     pub fn match_line(&self, line: &str) -> (usize, Vec<String>, bool) {
@@ -476,9 +472,6 @@ impl Matcher {
         let c = self.clusters.get(id)?.as_ref()?;
         Some(c.to_template(self.param_id))
     }
-    // ------------------------------------------------------------------
-    // Internal matching
-    // ------------------------------------------------------------------
     fn tokenize_input(&self, content: &str) -> Option<Vec<String>> {
         if content.len() > self.cfg.max_bytes() {
             return None;
@@ -500,8 +493,6 @@ impl Matcher {
         }
     }
     fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
-        // Quick rejection: if no cluster has a param at position 0 and there
-        // are no extra delimiters, an unknown first token means no match.
         if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {
             if let Some(ref dict) = self.dict_frozen {
                 if dict
@@ -556,7 +547,6 @@ impl Matcher {
         let max_depth = self.cfg.depth().saturating_sub(2);
         let mut cur_depth = 1;
         let mut cur_idx = root_idx;
-        // Use a stack-allocated buffer for small token counts, Vec for larger.
         if tc <= 128 {
             let mut ids = [UNKNOWN_TOKEN_ID; 128];
             for (i, tok) in tokens.iter().enumerate() {
@@ -609,8 +599,6 @@ impl Matcher {
         let n_tokens = tokens.len();
         let needed = self.required_score(n_tokens, threshold);
 
-        // Fast path: at threshold=1.0 with include_params, return the first
-        // perfect match — every non-param token must match exactly.
         if include_params && threshold >= 1.0 {
             'next_candidate: for &cid in cluster_ids {
                 let Some(c) = self.clusters.get(cid.0).and_then(|c| c.as_ref()) else {
@@ -657,7 +645,6 @@ impl Matcher {
             let np_idx = &c.non_param_idx;
             let mut remaining = np_idx.len();
 
-            // Anchor checks: score first and last non-param positions first.
             if let Some(a) = c.anchor0 {
                 if c.token_str[a] == tokens[a] {
                     sim_tokens += 1;
@@ -703,9 +690,6 @@ impl Matcher {
             None
         }
     }
-    // ------------------------------------------------------------------
-    // Training
-    // ------------------------------------------------------------------
     fn create_cluster(&mut self, tokens: Vec<String>) -> Result<ClusterId, Error> {
         let mut token_ids = Vec::new();
         self.intern_token_ids(&tokens, &mut token_ids);
@@ -729,7 +713,6 @@ impl Matcher {
             .ok_or_else(|| Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes() })?;
         let tc = tokens.len();
         if tc >= self.root_by_len.len() {
-            // First log with this token count: create cluster + tree path.
             let cid = self.create_cluster(tokens)?;
             return Ok(self.clusters[cid.0]
                 .as_ref()
@@ -761,7 +744,6 @@ impl Matcher {
             cluster.count += 1;
             return Ok(cluster.to_template(self.param_id));
         }
-        // No match — create new cluster
         if self.cfg.max_clusters() > 0 && self.next_cluster.0 > self.cfg.max_clusters() {
             return Err(Error::MaxClustersReached {
                 limit: self.cfg.max_clusters(),

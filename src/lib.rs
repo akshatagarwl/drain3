@@ -699,10 +699,10 @@ impl Matcher {
         let tc = tokens.len();
         if tc >= self.root_by_len.len() {
             let cid = self.create_cluster(tokens)?;
-            return Ok(self.clusters[cid.0]
+            let cluster = self.clusters[cid.0]
                 .as_ref()
-                .expect("cluster was just created")
-                .to_template(&self.id_to_string, self.param_id));
+                .ok_or(Error::ClusterNotFound { id: cid.0 })?;
+            return Ok(cluster.to_template(&self.id_to_string, self.param_id));
         }
         if let Some(c) =
             self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold(), false)
@@ -735,10 +735,10 @@ impl Matcher {
             });
         }
         let cid = self.create_cluster(tokens)?;
-        Ok(self.clusters[cid.0]
+        let cluster = self.clusters[cid.0]
             .as_ref()
-            .expect("cluster was just created")
-            .to_template(&self.id_to_string, self.param_id))
+            .ok_or(Error::ClusterNotFound { id: cid.0 })?;
+        Ok(cluster.to_template(&self.id_to_string, self.param_id))
     }
     /// Read-only lookup: find the best matching template for a line without
     /// mutating the matcher.
@@ -900,7 +900,7 @@ fn tokenize_whitespace_count(content: &str, dst: &mut Vec<String>, max_tokens: u
         }
         dst.push(
             std::str::from_utf8(&bytes[start..i])
-                .expect("ascii space split preserves utf8")
+                .unwrap()
                 .to_string(),
         );
         start = i + 1;
@@ -911,7 +911,7 @@ fn tokenize_whitespace_count(content: &str, dst: &mut Vec<String>, max_tokens: u
     }
     dst.push(
         std::str::from_utf8(&bytes[start..])
-            .expect("ascii space split preserves utf8")
+            .unwrap()
             .to_string(),
     );
     count

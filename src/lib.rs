@@ -26,7 +26,7 @@
 use snafu::Snafu;
 use std::cell::RefCell;
 use std::collections::HashMap;
-mod dict;
+
 mod prefilter;
 
 /// Errors that can occur during training or template reconstruction.
@@ -355,7 +355,7 @@ pub struct Matcher {
     next_cluster: ClusterId,
     match_needed: Vec<usize>,
     prefilter_buckets: Vec<prefilter::PrefilterBucket>,
-    dict_frozen: Option<dict::FrozenDict>,
+    dict_frozen: Option<HashMap<String, TokenId>>,
     has_param_first: bool,
     scratch_tok: RefCell<Vec<String>>,
 }
@@ -388,7 +388,7 @@ impl Matcher {
     fn freeze_dict(&mut self) {
         let entries: Vec<(String, TokenId)> =
             self.dict_ids.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        self.dict_frozen = Some(dict::FrozenDict::new(entries));
+        self.dict_frozen = Some(entries.into_iter().collect());
         let mut scratch = self.scratch_tok.borrow_mut();
         if scratch.capacity() < self.cfg.max_tokens() {
             *scratch = Vec::with_capacity(self.cfg.max_tokens());
@@ -403,7 +403,7 @@ impl Matcher {
     }
     fn resolve_token_id(&self, token: &str) -> TokenId {
         if let Some(ref dict) = self.dict_frozen {
-            dict.lookup(token).unwrap_or(self.param_id)
+            dict.get(token).copied().unwrap_or(self.param_id)
         } else {
             self.dict_ids.get(token).copied().unwrap_or(self.param_id)
         }
@@ -496,7 +496,7 @@ impl Matcher {
         if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {
             if let Some(ref dict) = self.dict_frozen {
                 if dict
-                    .lookup(&line[..line.find(' ').unwrap_or(line.len())])
+                    .get(&line[..line.find(' ').unwrap_or(line.len())])
                     .is_none()
                 {
                     return (None, Vec::new());

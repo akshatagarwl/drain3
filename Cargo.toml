@@ -12,7 +12,7 @@ categories = ["algorithms", "text-processing"]
 [dependencies]
 bon = "3.9.1"
 fastrand = "2.4.1"
-thiserror = "2.0.18"
+snafu = "0.8"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

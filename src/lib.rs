@@ -22,44 +22,45 @@
 //! # Ok(())
 //! # }
 //! ```
+use snafu::Snafu;
 use std::cell::RefCell;
 use std::collections::HashMap;
 mod dict;
 mod prefilter;
 
 /// Errors that can occur during training or template reconstruction.
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[derive(Debug, Snafu)]
 pub enum Error {
     /// Tree depth is below the minimum of 3.
-    #[error("depth must be >= 3, got {got}")]
+    #[snafu(display("depth must be >= 3, got {got}"))]
     InvalidDepth { got: usize },
     /// Similarity threshold is outside [0, 1].
-    #[error("similarity threshold must be in [0, 1], got {got}")]
+    #[snafu(display("similarity threshold must be in [0, 1], got {got}"))]
     InvalidSimilarityThreshold { got: f64 },
     /// Match threshold is outside [0, 1].
-    #[error("match threshold must be in [0, 1], got {got}")]
+    #[snafu(display("match threshold must be in [0, 1], got {got}"))]
     InvalidMatchThreshold { got: f64 },
     /// Max children is below the minimum of 2.
-    #[error("max children must be >= 2, got {got}")]
+    #[snafu(display("max children must be >= 2, got {got}"))]
     InvalidMaxChildren { got: usize },
     /// Max tokens must be >= 1.
-    #[error("max tokens must be >= 1, got {got}")]
+    #[snafu(display("max tokens must be >= 1, got {got}"))]
     InvalidMaxTokens { got: usize },
     /// Max bytes must be >= 1.
-    #[error("max bytes must be >= 1, got {got}")]
+    #[snafu(display("max bytes must be >= 1, got {got}"))]
     InvalidMaxBytes { got: usize },
     /// Param string was empty.
-    #[error("param string must not be empty")]
+    #[snafu(display("param string must not be empty"))]
     EmptyParamString,
     /// Template id must be > 0.
-    #[error("template id must be > 0, got {0}")]
-    InvalidTemplateId(usize),
+    #[snafu(display("template id must be > 0, got {id}"))]
+    InvalidTemplateId { id: usize },
     /// Duplicate template id encountered.
-    #[error("duplicate template id {0}")]
-    DuplicateTemplateId(usize),
+    #[snafu(display("duplicate template id {id}"))]
+    DuplicateTemplateId { id: usize },
     /// Template count must be > 0.
-    #[error("template {0} count must be > 0")]
-    ZeroCountTemplate(usize),
+    #[snafu(display("template {id} count must be > 0"))]
+    ZeroCountTemplate { id: usize },
 }
 
 /// Sentinel for tokens that are not present in the dictionary.
@@ -855,13 +856,13 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
     let mut max_id = 0;
     for t in &sorted {
         if t.id() == 0 {
-            return Err(Error::InvalidTemplateId(t.id()));
+            return Err(Error::InvalidTemplateId { id: t.id() });
         }
         if !seen.insert(t.id()) {
-            return Err(Error::DuplicateTemplateId(t.id()));
+            return Err(Error::DuplicateTemplateId { id: t.id() });
         }
         if t.count() == 0 {
-            return Err(Error::ZeroCountTemplate(t.id()));
+            return Err(Error::ZeroCountTemplate { id: t.id() });
         }
         if t.id() > max_id {
             max_id = t.id();

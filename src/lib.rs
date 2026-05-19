@@ -534,20 +534,26 @@ impl Matcher {
         if content.len() > self.cfg.max_bytes() {
             return None;
         }
+
+        let mut tokens = Vec::new();
         if self.cfg.extra_delimiters().is_empty() {
-            let mut buf = Vec::new();
-            let count = tokenize_whitespace_count(content, &mut buf, self.cfg.max_tokens());
+            let count =
+                tokenize_whitespace_count(content, &mut tokens, self.cfg.max_tokens());
             if count == 0 || count > self.cfg.max_tokens() {
                 return None;
             }
-            Some(buf.clone())
         } else {
-            let t = tokenize(content, self.cfg.extra_delimiters(), self.cfg.max_tokens());
-            if t.is_empty() || t.len() > self.cfg.max_tokens() {
+            tokens = tokenize(
+                content,
+                self.cfg.extra_delimiters(),
+                self.cfg.max_tokens(),
+            );
+            if tokens.is_empty() || tokens.len() > self.cfg.max_tokens() {
                 return None;
             }
-            Some(t)
         }
+
+        Some(tokens)
     }
     fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
         if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {

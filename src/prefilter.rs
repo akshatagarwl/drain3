@@ -135,37 +135,31 @@ pub fn prefilter_candidates_compact<'a>(
 ) -> Option<()> {
     let tc = tokens.len();
     let b = buckets.get(tc)?;
-    let any = &b.any[..];
 
-    let mut first = &[][..];
-    let mut last = &[][..];
-    let mut first_last = &[][..];
-
-    if tc > 0 {
-        let first_id = interner
-            .get(&tokens[0])
-            .map(TokenId::from)
-            .unwrap_or(param_id);
-        let last_id = interner
-            .get(&tokens[tc - 1])
-            .map(TokenId::from)
-            .unwrap_or(param_id);
-        let first_known = first_id != param_id;
-        let last_known = last_id != param_id;
-
-        if first_known {
-            first = search_sorted_token_id(&b.first_keys, &b.first_vals, first_id);
-        }
-        if last_known {
-            last = search_sorted_token_id(&b.last_keys, &b.last_vals, last_id);
-        }
-        if first_known && last_known {
-            let combined = TokenId(FirstLastKey::from_token_ids(first_id.0, last_id.0).pack());
-            first_last = search_sorted_token_id(&b.fl_keys, &b.fl_vals, combined);
-        }
+    // Fast path: no tokens → only "any" bucket applies
+    if tc == 0 {
+        return merge_prefilter_groups(&b.any[..], &[], &[], &[], dst);
     }
 
-    merge_prefilter_groups(any, first, last, first_last, dst)
+    let first_id = interner.get(&tokens[0]).map(TokenId::from).unwrap_or(param_id);
+    let last_id = interner.get(&tokens[tc - 1]).map(TokenId::from).unwrap_or(param_id);
+    let first_known = first_id != param_id;
+    let last_known = last_id != param_id;
+
+    let first = first_known
+        .then(|| search_sorted_token_id(&b.first_keys, &b.first_vals, first_id))
+        .unwrap_or(&[]);
+    let last = last_known
+        .then(|| search_sorted_token_id(&b.last_keys, &b.last_vals, last_id))
+        .unwrap_or(&[]);
+    let first_last = if first_known && last_known {
+        let combined = TokenId(FirstLastKey::from_token_ids(first_id.0, last_id.0).pack());
+        search_sorted_token_id(&b.fl_keys, &b.fl_vals, combined)
+    } else {
+        &[]
+    };
+
+    merge_prefilter_groups(&b.any[..], first, last, first_last, dst)
 }
 
 fn merge_prefilter_groups(

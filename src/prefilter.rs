@@ -1,3 +1,4 @@
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 use crate::{Cluster, ClusterId, TokenId, StringInterner, BucketBackend};
@@ -112,8 +113,8 @@ pub fn prefilter_candidates_compact<'a>(
     interner: &'a StringInterner<BucketBackend<usize>>,
     param_id: TokenId,
     tokens: &[String],
-    dst: &'a mut Vec<ClusterId>,
-) -> Option<&'a [ClusterId]> {
+    dst: &mut SmallVec<[ClusterId; 16]>,
+) -> Option<()> {
     let tc = tokens.len();
     let b = buckets.get(tc)?;
     let any = &b.any[..];
@@ -149,40 +150,38 @@ pub fn prefilter_candidates_compact<'a>(
     merge_prefilter_groups(any, first, last, first_last, dst)
 }
 
-fn merge_prefilter_groups<'a>(
-    any: &'a [ClusterId],
-    first: &'a [ClusterId],
-    last: &'a [ClusterId],
-    first_last: &'a [ClusterId],
-    dst: &'a mut Vec<ClusterId>,
-) -> Option<&'a [ClusterId]> {
-    let mut non_empty = 0usize;
-    let mut single: Option<&'a [ClusterId]> = None;
-    let mut total = 0usize;
-
-    for group in [any, first, last, first_last] {
-        if group.is_empty() {
-            continue;
-        }
-        non_empty += 1;
-        single = Some(group);
-        total += group.len();
-    }
-
+fn merge_prefilter_groups(
+    any: &[ClusterId],
+    first: &[ClusterId],
+    last: &[ClusterId],
+    first_last: &[ClusterId],
+    dst: &mut SmallVec<[ClusterId; 16]>,
+) -> Option<()> {
+    let groups: [&[ClusterId]; 4] = [any, first, last, first_last];
+    let non_empty = groups.iter().filter(|g| !g.is_empty()).count();
     if non_empty == 0 {
         return None;
     }
     if non_empty == 1 {
-        return single;
+        dst.clear();
+        if !any.is_empty() {
+            dst.extend_from_slice(any);
+        } else if !first.is_empty() {
+            dst.extend_from_slice(first);
+        } else if !last.is_empty() {
+            dst.extend_from_slice(last);
+        } else {
+            dst.extend_from_slice(first_last);
+        }
+        return Some(());
     }
-
     dst.clear();
-    dst.reserve(total);
+    dst.reserve(any.len() + first.len() + last.len() + first_last.len());
     dst.extend_from_slice(any);
     dst.extend_from_slice(first);
     dst.extend_from_slice(last);
     dst.extend_from_slice(first_last);
-    Some(dst)
+    Some(())
 }
 
 fn search_sorted_token_id<'a>(

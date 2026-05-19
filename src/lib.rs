@@ -24,6 +24,7 @@
 //! # }
 //! ```
 use snafu::Snafu;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use string_interner::backend::BucketBackend;
 use string_interner::StringInterner;
@@ -91,6 +92,44 @@ impl TokenId {
         TokenId(s as u64)
     }
 }
+
+// ── Config defaults ───────────────────────────────────────────────────────────
+
+/// Default prefix tree depth. Must be >= 3.
+/// Validated in [`Config::validate`].
+const DEFAULT_DEPTH: usize = 4;
+
+/// Default similarity threshold for training (0.0–1.0).
+/// Fraction of tokens that must match for a line to join a cluster.
+const DEFAULT_SIMILARITY_THRESHOLD: f64 = 0.5;
+
+/// Default match threshold for matching (0.0–1.0).
+/// Fraction of tokens that must match for a line to be considered a match.
+const DEFAULT_MATCH_THRESHOLD: f64 = 1.0;
+
+/// Default max children per inner node.
+/// One slot is reserved for the param catch-all child.
+const DEFAULT_MAX_CHILDREN: usize = 100;
+
+/// Default max tokens per line.
+/// Lines exceeding this are skipped during training and matching.
+const DEFAULT_MAX_TOKENS: usize = 64;
+
+/// Default max bytes per line.
+/// Lines exceeding this are skipped during training and matching.
+const DEFAULT_MAX_BYTES: usize = 1024;
+
+/// Default max clusters. 0 = unlimited.
+const DEFAULT_MAX_CLUSTERS: usize = 0;
+
+/// Minimum allowed tree depth.
+const MIN_DEPTH: usize = 3;
+
+/// Minimum allowed max_children value.
+const MIN_MAX_CHILDREN: usize = 2;
+
+/// Minimum allowed max_tokens and max_bytes value.
+const MIN_LINE_LIMIT: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ClusterId(pub(crate) usize);
@@ -491,16 +530,18 @@ impl Matcher {
             return (None, tokens);
         }
         if self.cfg.enable_match_prefilter() && tc < self.prefilter_buckets.len() {
-            let mut candidates = Vec::new();
-            if let Some(ids) = prefilter::prefilter_candidates_compact(
+            let mut candidates: SmallVec<[ClusterId; 16]> = SmallVec::new();
+            if prefilter::prefilter_candidates_compact(
                 &self.prefilter_buckets,
                 &self.interner,
                 self.param_id,
                 &tokens,
                 &mut candidates,
-            ) {
+            )
+            .is_some()
+            {
                 let cluster =
-                    self.fast_match_strings(ids, &tokens, self.cfg.match_threshold(), true);
+                    self.fast_match_strings(&candidates, &tokens, self.cfg.match_threshold(), true);
                 return (cluster, tokens);
             }
             return (None, tokens);
@@ -528,6 +569,7 @@ impl Matcher {
         let max_depth = self.cfg.depth().saturating_sub(2);
         let mut cur_depth = 1;
         let mut cur_idx = root_idx;
+
         if tc <= 128 {
             let mut ids = [UNKNOWN_TOKEN_ID; 128];
             for (i, tok) in tokens.iter().enumerate() {
@@ -546,14 +588,11 @@ impl Matcher {
                 cur_depth += 1;
             }
         } else {
-            let ids: Vec<TokenId> = tokens
-                .iter()
-                .map(|tok| self.resolve_token_id(tok))
-                .collect();
-            for &tid in ids.iter() {
+            for tok in tokens.iter() {
                 if cur_depth >= max_depth || cur_depth == tc {
                     break;
                 }
+                let tid = self.resolve_token_id(tok);
                 let next = self.nodes[cur_idx]
                     .children
                     .get(&tid)
@@ -579,41 +618,12 @@ impl Matcher {
     ) -> Option<&Cluster> {
         let n_tokens = tokens.len();
         let needed = self.required_score(n_tokens, threshold);
+        let exact_mode = include_params && threshold >= 1.0;
 
-        if include_params && threshold >= 1.0 {
-            'next_candidate: for &cid in cluster_ids {
-                let Some(c) = self.clusters.get(cid.0).and_then(|c| c.as_ref()) else {
-                    continue;
-                };
-                if c.token_str.len() != n_tokens {
-                    continue;
-                }
-                if let Some(a) = c.anchor0 {
-                    if c.token_str[a] != tokens[a] {
-                        continue;
-                    }
-                }
-                if let Some(a) = c.anchor1 {
-                    if c.token_str[a] != tokens[a] {
-                        continue;
-                    }
-                }
-                for &idx in &c.non_param_idx {
-                    if Some(idx) == c.anchor0 || Some(idx) == c.anchor1 {
-                        continue;
-                    }
-                    if c.token_str[idx] != tokens[idx] {
-                        continue 'next_candidate;
-                    }
-                }
-                return Some(c);
-            }
-            return None;
-        }
+        let mut best_score: isize = -1;
+        let mut best_param_count: isize = -1;
+        let mut best_cluster: Option<&Cluster> = None;
 
-        let mut max_score: isize = -1;
-        let mut max_param_count: isize = -1;
-        let mut max_cluster: Option<&Cluster> = None;
         for &cid in cluster_ids {
             let Some(c) = self.clusters.get(cid.0).and_then(|c| c.as_ref()) else {
                 continue;
@@ -621,52 +631,62 @@ impl Matcher {
             if c.token_str.len() != n_tokens {
                 continue;
             }
+
             let param_count = c.param_count;
-            let mut sim_tokens = if include_params { param_count } else { 0 };
-            let np_idx = &c.non_param_idx;
-            let mut remaining = np_idx.len();
+            let mut sim_tokens: isize = if include_params { param_count as isize } else { 0 };
+            let mut remaining = c.non_param_idx.len();
 
-            if let Some(a) = c.anchor0 {
+            let anchor0_pos = c.anchor0;
+            let anchor1_pos = c.anchor1;
+
+            if let Some(a) = anchor0_pos {
                 if c.token_str[a] == tokens[a] {
                     sim_tokens += 1;
                 }
                 remaining -= 1;
-                if sim_tokens + remaining < needed {
+                if sim_tokens + (remaining as isize) < (needed as isize) {
                     continue;
                 }
             }
-            if let Some(a) = c.anchor1 {
+            if let Some(a) = anchor1_pos {
                 if c.token_str[a] == tokens[a] {
                     sim_tokens += 1;
                 }
                 remaining -= 1;
-                if sim_tokens + remaining < needed {
+                if sim_tokens + (remaining as isize) < (needed as isize) {
                     continue;
                 }
             }
 
-            for &idx in np_idx {
-                if Some(idx) == c.anchor0 || Some(idx) == c.anchor1 {
+            for &idx in &c.non_param_idx {
+                if Some(idx) == anchor0_pos || Some(idx) == anchor1_pos {
                     continue;
                 }
                 if c.token_str[idx] == tokens[idx] {
                     sim_tokens += 1;
                 }
                 remaining -= 1;
-                if sim_tokens + remaining < needed {
+                if sim_tokens + (remaining as isize) < (needed as isize) {
                     break;
                 }
             }
-            if sim_tokens as isize > max_score
-                || (sim_tokens as isize == max_score && param_count as isize > max_param_count)
+
+            if sim_tokens > best_score
+                || (sim_tokens == best_score && param_count as isize > best_param_count)
             {
-                max_score = sim_tokens as isize;
-                max_param_count = param_count as isize;
-                max_cluster = Some(c);
+                best_score = sim_tokens;
+                best_param_count = param_count as isize;
+                best_cluster = Some(c);
+                if exact_mode && sim_tokens >= (needed as isize) {
+                    return best_cluster;
+                }
             }
         }
-        if max_score >= needed as isize {
-            max_cluster
+
+        if exact_mode {
+            None
+        } else if best_score >= (needed as isize) {
+            best_cluster
         } else {
             None
         }

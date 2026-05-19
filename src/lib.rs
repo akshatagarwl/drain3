@@ -172,75 +172,30 @@ impl From<usize> for ClusterId {
 #[derive(Debug, Clone, PartialEq, bon::Builder)]
 pub struct Config {
     #[builder(default = DEFAULT_DEPTH)]
-    depth: usize,
+    pub depth: usize,
     #[builder(default = DEFAULT_SIMILARITY_THRESHOLD)]
-    similarity_threshold: f64,
+    pub similarity_threshold: f64,
     #[builder(default = DEFAULT_MATCH_THRESHOLD)]
-    match_threshold: f64,
+    pub match_threshold: f64,
     #[builder(default = DEFAULT_MAX_CHILDREN)]
-    max_children: usize,
+    pub max_children: usize,
     #[builder(default = DEFAULT_MAX_TOKENS)]
-    max_tokens: usize,
+    pub max_tokens: usize,
     #[builder(default = DEFAULT_MAX_BYTES)]
-    max_bytes: usize,
+    pub max_bytes: usize,
     #[builder(default = DEFAULT_MAX_CLUSTERS)]
-    max_clusters: usize,
+    pub max_clusters: usize,
     #[builder(default = "<*>".to_string())]
-    param_string: String,
+    pub param_string: String,
     #[builder(default = true)]
-    parametrize_numeric_tokens: bool,
+    pub parametrize_numeric_tokens: bool,
     #[builder(default)]
-    extra_delimiters: Vec<String>,
+    pub extra_delimiters: Vec<String>,
     #[builder(default = true)]
-    enable_match_prefilter: bool,
+    pub enable_match_prefilter: bool,
 }
 
 impl Config {
-    /// Prefix tree depth. Must be >= 3.
-    pub fn depth(&self) -> usize {
-        self.depth
-    }
-    /// Fraction of tokens that must match for a line to join a cluster during training.
-    pub fn similarity_threshold(&self) -> f64 {
-        self.similarity_threshold
-    }
-    /// Fraction of tokens that must match for a line to be considered a match.
-    pub fn match_threshold(&self) -> f64 {
-        self.match_threshold
-    }
-    /// Max children per inner node. One slot is reserved for the param catch-all.
-    pub fn max_children(&self) -> usize {
-        self.max_children
-    }
-    /// Max tokens per line. Lines with more tokens are skipped.
-    pub fn max_tokens(&self) -> usize {
-        self.max_tokens
-    }
-    /// Max bytes per line. Lines longer than this are skipped.
-    pub fn max_bytes(&self) -> usize {
-        self.max_bytes
-    }
-    /// Max clusters. 0 = unlimited.
-    pub fn max_clusters(&self) -> usize {
-        self.max_clusters
-    }
-    /// Placeholder string for param tokens.
-    pub fn param_string(&self) -> &str {
-        &self.param_string
-    }
-    /// Whether numeric tokens are automatically parameterized during tree insertion.
-    pub fn parametrize_numeric_tokens(&self) -> bool {
-        self.parametrize_numeric_tokens
-    }
-    /// Additional delimiter strings to replace with spaces before tokenization.
-    pub fn extra_delimiters(&self) -> &[String] {
-        &self.extra_delimiters
-    }
-    /// Enable the first/last token prefilter optimization for matching.
-    pub fn enable_match_prefilter(&self) -> bool {
-        self.enable_match_prefilter
-    }
-
     fn validate(&self) -> Result<(), Error> {
         if self.depth < MIN_DEPTH {
             return Err(Error::InvalidDepth { got: self.depth });
@@ -451,7 +406,7 @@ impl Matcher {
     /// [`matcher_from_templates`] for typical use.
     pub fn new(cfg: Config) -> Self {
         let mut interner = StringInterner::new();
-        let param_id = TokenId::from(interner.get_or_intern(cfg.param_string()));
+        let param_id = TokenId::from(interner.get_or_intern(&cfg.param_string));
         Self {
             cfg: cfg.clone(),
             templates: Vec::new(),
@@ -483,7 +438,7 @@ impl Matcher {
         }
     }
     fn required_score(&self, token_count: usize, sim_th: f64) -> usize {
-        if sim_th == self.cfg.match_threshold() && token_count < self.min_match_scores.len() {
+        if sim_th == self.cfg.match_threshold && token_count < self.min_match_scores.len() {
             return self.min_match_scores[token_count];
         }
         (sim_th * token_count as f64).ceil() as usize
@@ -491,7 +446,7 @@ impl Matcher {
     fn rebuild_min_match_scores(&mut self) {
         self.min_match_scores.resize(self.root_by_len.len(), 0);
         for tc in 0..self.min_match_scores.len() {
-            self.min_match_scores[tc] = (self.cfg.match_threshold() * tc as f64).ceil() as usize;
+            self.min_match_scores[tc] = (self.cfg.match_threshold * tc as f64).ceil() as usize;
         }
     }
 
@@ -531,24 +486,24 @@ impl Matcher {
         Some(c.to_template(&self.interner, self.param_id))
     }
     fn tokenize_input(&self, content: &str) -> Option<Vec<String>> {
-        if content.len() > self.cfg.max_bytes() {
+        if content.len() > self.cfg.max_bytes {
             return None;
         }
 
         let mut tokens = Vec::new();
-        if self.cfg.extra_delimiters().is_empty() {
+        if self.cfg.extra_delimiters.is_empty() {
             let count =
-                tokenize_whitespace_count(content, &mut tokens, self.cfg.max_tokens());
-            if count == 0 || count > self.cfg.max_tokens() {
+                tokenize_whitespace_count(content, &mut tokens, self.cfg.max_tokens);
+            if count == 0 || count > self.cfg.max_tokens {
                 return None;
             }
         } else {
             tokens = tokenize(
                 content,
-                self.cfg.extra_delimiters(),
-                self.cfg.max_tokens(),
+                &self.cfg.extra_delimiters,
+                self.cfg.max_tokens,
             );
-            if tokens.is_empty() || tokens.len() > self.cfg.max_tokens() {
+            if tokens.is_empty() || tokens.len() > self.cfg.max_tokens {
                 return None;
             }
         }
@@ -556,7 +511,7 @@ impl Matcher {
         Some(tokens)
     }
     fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
-        if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {
+        if !self.has_param_first && self.cfg.extra_delimiters.is_empty() {
             let first_tok = &line[..line.find(' ').unwrap_or(line.len())];
             if self.interner.get(first_tok).is_none() {
                 return (None, Vec::new());
@@ -569,7 +524,7 @@ impl Matcher {
         if tc >= self.root_by_len.len() || self.root_by_len[tc].is_none() {
             return (None, tokens);
         }
-        if self.cfg.enable_match_prefilter() && tc < self.prefilter_buckets.len() {
+        if self.cfg.enable_match_prefilter && tc < self.prefilter_buckets.len() {
             let mut candidates: SmallVec<[ClusterId; PREFILTER_CAPACITY]> = SmallVec::new();
             if prefilter::prefilter_candidates_compact(
                 &self.prefilter_buckets,
@@ -581,12 +536,12 @@ impl Matcher {
             .is_some()
             {
                 let cluster =
-                    self.fast_match_strings(&candidates, &tokens, self.cfg.match_threshold(), true);
+                    self.fast_match_strings(&candidates, &tokens, self.cfg.match_threshold, true);
                 return (cluster, tokens);
             }
             return (None, tokens);
         }
-        let cluster = self.tree_search_with_threshold(&tokens, self.cfg.match_threshold(), true);
+        let cluster = self.tree_search_with_threshold(&tokens, self.cfg.match_threshold, true);
         (cluster, tokens)
     }
     fn tree_search_with_threshold(
@@ -606,7 +561,7 @@ impl Matcher {
                 .first()
                 .and_then(|&id| self.clusters.get(id.0).and_then(|c| c.as_ref()));
         }
-        let max_depth = self.cfg.depth().saturating_sub(2);
+        let max_depth = self.cfg.depth.saturating_sub(2);
         let mut cur_depth = 1;
         let mut cur_idx = root_idx;
 
@@ -751,7 +706,7 @@ impl Matcher {
     /// internal error occurs.
     pub fn add_log_message(&mut self, content: &str) -> Result<Template, Error> {
         let tokens = self.tokenize_input(content)
-            .ok_or(Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes() })?;
+            .ok_or(Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes })?;
         let tc = tokens.len();
         if tc >= self.root_by_len.len() {
             let cid = self.create_cluster(tokens)?;
@@ -761,7 +716,7 @@ impl Matcher {
             return Ok(cluster.to_template(&self.interner, self.param_id));
         }
         if let Some(c) =
-            self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold(), false)
+            self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold, false)
         {
             let cid = c.id;
             let mut changed = false;
@@ -774,7 +729,7 @@ impl Matcher {
                 }
                 if cluster.token_str[i] != *tok {
                     cluster.token_ids[i] = self.param_id;
-                    cluster.token_str[i] = self.cfg.param_string().to_string();
+                    cluster.token_str[i] = self.cfg.param_string.to_string();
                     cluster.param_count += 1;
                     changed = true;
                 }
@@ -785,9 +740,9 @@ impl Matcher {
             cluster.count += 1;
             return Ok(cluster.to_template(&self.interner, self.param_id));
         }
-        if self.cfg.max_clusters() > 0 && self.next_cluster_id.0 > self.cfg.max_clusters() {
+        if self.cfg.max_clusters > 0 && self.next_cluster_id.0 > self.cfg.max_clusters {
             return Err(Error::MaxClustersReached {
-                limit: self.cfg.max_clusters(),
+                limit: self.cfg.max_clusters,
             });
         }
         let cid = self.create_cluster(tokens)?;
@@ -825,7 +780,7 @@ impl Matcher {
         }
         for (i, &token_id) in cluster.token_ids.iter().enumerate() {
             let cur_depth = i + 1;
-            if cur_depth >= self.cfg.depth() - 2 || cur_depth >= tc {
+            if cur_depth >= self.cfg.depth - 2 || cur_depth >= tc {
                 self.nodes[cur_idx].cluster_ids.push(cluster_id);
                 break;
             }
@@ -833,16 +788,16 @@ impl Matcher {
                 let node = &self.nodes[cur_idx];
                 if node.children.contains_key(&token_id) {
                     token_id
-                } else if self.cfg.parametrize_numeric_tokens()
+                } else if self.cfg.parametrize_numeric_tokens
                     && has_numbers(&cluster.token_str[i])
                 {
                     self.param_id
                 } else {
                     let specific_count = node.children.len();
                     let has_wild = node.children.contains_key(&self.param_id);
-                    let available = self.cfg.max_children() - 1;
+                    let available = self.cfg.max_children - 1;
                     if specific_count < available
-                        || (!has_wild && specific_count < self.cfg.max_children() - 1)
+                        || (!has_wild && specific_count < self.cfg.max_children - 1)
                     {
                         token_id
                     } else {
@@ -919,7 +874,7 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
         let mut dense_idx = 0;
         for (i, slot) in full.iter_mut().enumerate().take(t.token_count()) {
             if t.is_param(i) {
-                *slot = m.cfg.param_string().to_string();
+                *slot = m.cfg.param_string.to_string();
             } else {
                 *slot = t.tokens()[dense_idx].clone();
                 dense_idx += 1;

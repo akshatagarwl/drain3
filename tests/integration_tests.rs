@@ -55,7 +55,7 @@ fn logpai_sshd_scenario() {
     let mut got: HashMap<String, usize> = HashMap::new();
     let mut total = 0;
     for tmpl in m.templates() {
-        let key = render_template_placeholders(&tmpl, cfg.param_string());
+        let key = render_template_placeholders(&tmpl, &cfg.param_string);
         *got.entry(key).or_insert(0) += tmpl.count();
         total += tmpl.count();
     }
@@ -93,7 +93,7 @@ fn logpai_sshd_scenario_high_sim() {
     let mut got: HashMap<String, usize> = HashMap::new();
     let mut total = 0;
     for tmpl in m.templates() {
-        let key = render_template_placeholders(&tmpl, cfg.param_string());
+        let key = render_template_placeholders(&tmpl, &cfg.param_string);
         *got.entry(key).or_insert(0) += tmpl.count();
         total += tmpl.count();
     }
@@ -314,7 +314,7 @@ fn config_and_templates_are_copied() {
         .unwrap();
     let read_cfg = m.config();
     assert_eq!(
-        read_cfg.extra_delimiters()[0],
+        read_cfg.extra_delimiters[0],
         "=",
         "config getter leaked mutable slice"
     );

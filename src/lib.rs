@@ -131,6 +131,16 @@ const MIN_MAX_CHILDREN: usize = 2;
 /// Minimum allowed max_tokens and max_bytes value.
 const MIN_LINE_LIMIT: usize = 1;
 
+// ── Internal constants ─────────────────────────────────────────────────────────
+
+/// Stack-allocated token batch size for the fast path in tree search.
+/// Tokens at or below this count use a fixed-size array to avoid heap allocation.
+const INLINE_TOKEN_BATCH_SIZE: usize = 128;
+
+/// Stack capacity for prefilter candidate buffer.
+/// Determines how many cluster candidates can be collected without heap allocation.
+const PREFILTER_CAPACITY: usize = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ClusterId(pub(crate) usize);
 
@@ -530,7 +540,7 @@ impl Matcher {
             return (None, tokens);
         }
         if self.cfg.enable_match_prefilter() && tc < self.prefilter_buckets.len() {
-            let mut candidates: SmallVec<[ClusterId; 16]> = SmallVec::new();
+            let mut candidates: SmallVec<[ClusterId; PREFILTER_CAPACITY]> = SmallVec::new();
             if prefilter::prefilter_candidates_compact(
                 &self.prefilter_buckets,
                 &self.interner,
@@ -570,8 +580,8 @@ impl Matcher {
         let mut cur_depth = 1;
         let mut cur_idx = root_idx;
 
-        if tc <= 128 {
-            let mut ids = [UNKNOWN_TOKEN_ID; 128];
+        if tc <= INLINE_TOKEN_BATCH_SIZE {
+            let mut ids = [UNKNOWN_TOKEN_ID; INLINE_TOKEN_BATCH_SIZE];
             for (i, tok) in tokens.iter().enumerate() {
                 ids[i] = self.resolve_token_id(tok);
             }

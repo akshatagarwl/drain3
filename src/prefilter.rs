@@ -146,12 +146,16 @@ pub fn prefilter_candidates_compact<'a>(
     let first_known = first_id != param_id;
     let last_known = last_id != param_id;
 
-    let first = first_known
-        .then(|| search_sorted_token_id(&b.first_keys, &b.first_vals, first_id))
-        .unwrap_or(&[]);
-    let last = last_known
-        .then(|| search_sorted_token_id(&b.last_keys, &b.last_vals, last_id))
-        .unwrap_or(&[]);
+    let first = if first_known {
+        search_sorted_token_id(&b.first_keys, &b.first_vals, first_id)
+    } else {
+        &[]
+    };
+    let last = if last_known {
+        search_sorted_token_id(&b.last_keys, &b.last_vals, last_id)
+    } else {
+        &[]
+    };
     let first_last = if first_known && last_known {
         let combined = TokenId(FirstLastKey::from_token_ids(first_id.0, last_id.0).pack());
         search_sorted_token_id(&b.fl_keys, &b.fl_vals, combined)

@@ -83,25 +83,16 @@ pub(crate) struct TokenId(pub(crate) u64);
 
 pub(crate) const UNKNOWN_TOKEN_ID: TokenId = TokenId(0);
 
-impl TokenId {
-    pub(crate) fn to_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    pub(crate) fn from_usize(s: usize) -> Self {
-        TokenId(s as u64)
-    }
-}
-
-impl From<TokenId> for usize {
-    fn from(id: TokenId) -> Self {
-        id.0 as usize
-    }
-}
-
 impl From<usize> for TokenId {
     fn from(s: usize) -> Self {
         TokenId(s as u64)
+    }
+}
+
+#[allow(dead_code)]
+impl From<TokenId> for usize {
+    fn from(id: TokenId) -> Self {
+        id.0 as usize
     }
 }
 
@@ -357,7 +348,7 @@ impl Cluster {
             if tid == param_id {
                 params[i] = true;
             } else {
-                dense.push(interner.resolve(tid.to_usize()).unwrap().to_string());
+                dense.push(interner.resolve(usize::from(tid)).unwrap().to_string());
             }
         }
         Template {

@@ -3,6 +3,24 @@ use std::collections::HashMap;
 
 use crate::{Cluster, ClusterId, TokenId, StringInterner, BucketBackend};
 
+/// Packs two token IDs into a single 64-bit key for the first-last prefilter index.
+/// Layout: lower 32 bits = first token ID, upper 32 bits = last token ID.
+/// This replaces the raw bit-manipulation `(first << 32) | (last & 0xFFFFFFFF)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FirstLastKey(u64);
+
+impl FirstLastKey {
+    /// Create a FirstLastKey from two token ID values (u64).
+    pub fn from_token_ids(first: u64, last: u64) -> Self {
+        FirstLastKey((first & 0xFFFFFFFF) | (last << 32))
+    }
+
+    /// Return the packed u64 value for use as a lookup key.
+    pub fn pack(&self) -> u64 {
+        self.0
+    }
+}
+
 /** Bucket of cluster ids indexed by first / last token for a single token-count
  *  length. Built once after training, read-only during matching. */
 #[derive(Debug, Default, Clone)]
@@ -72,7 +90,7 @@ pub fn rebuild_match_prefilter(
                     .push(ClusterId(id));
             }
             (false, false) => {
-                let combined = TokenId((first_id.0 << 32) | (last_id.0 & 0xFFFFFFFF));
+                let combined = TokenId(FirstLastKey::from_token_ids(first_id.0, last_id.0).pack());
                 fl_by_tc
                     .entry(token_count)
                     .or_default()
@@ -142,7 +160,7 @@ pub fn prefilter_candidates_compact<'a>(
             last = search_sorted_token_id(&b.last_keys, &b.last_vals, last_id);
         }
         if first_known && last_known {
-            let combined = TokenId((first_id.0 << 32) | (last_id.0 & 0xFFFFFFFF));
+            let combined = TokenId(FirstLastKey::from_token_ids(first_id.0, last_id.0).pack());
             first_last = search_sorted_token_id(&b.fl_keys, &b.fl_vals, combined);
         }
     }

@@ -3,7 +3,6 @@ use drain3::{train, Config};
 use std::sync::Arc;
 use std::thread;
 
-// Tiny deterministic LCG so we don't need an extra rand dependency.
 struct Rng(u64);
 
 impl Rng {
@@ -12,7 +11,6 @@ impl Rng {
     }
 
     fn next(&mut self) -> u64 {
-        // Parameters from Numerical Recipes.
         self.0 = self.0.wrapping_mul(1664525).wrapping_add(1013904223);
         self.0
     }
@@ -22,12 +20,10 @@ impl Rng {
     }
 }
 
-// Benchmarks ported from logpai/Drain3 benchmark suite.
 fn bench_drain3(c: &mut Criterion) {
     const N_LINES: usize = 5000;
     let mut rng = Rng::new(99);
 
-    // -- Merge workload: 5 repeating shapes, lots of cluster reuse ------------
     let formatters: [fn(&mut Rng) -> String; 5] = [
         |rng| {
             format!(
@@ -71,7 +67,6 @@ fn bench_drain3(c: &mut Criterion) {
     }
     let train_merge = &merge_lines[..N_LINES / 10];
 
-    // -- Fanout workload: many distinct, digit-free first tokens ---------------
     rng = Rng::new(99);
     let mut fanout_lines = Vec::with_capacity(N_LINES);
     for i in 0..N_LINES {
@@ -87,7 +82,6 @@ fn bench_drain3(c: &mut Criterion) {
         ));
     }
 
-    // -- train_merge ----------------------------------------------------------
     {
         let mut group = c.benchmark_group("drain3");
         group.throughput(Throughput::Elements(train_merge.len() as u64));
@@ -97,7 +91,6 @@ fn bench_drain3(c: &mut Criterion) {
         group.finish();
     }
 
-    // -- train_fanout ---------------------------------------------------------
     {
         let mut group = c.benchmark_group("drain3");
         group.throughput(Throughput::Elements(fanout_lines.len() as u64));
@@ -107,10 +100,8 @@ fn bench_drain3(c: &mut Criterion) {
         group.finish();
     }
 
-    // -- Pre-train a matcher for the match_* benchmarks -----------------------
     let matcher = train(train_merge, Config::default()).unwrap();
 
-    // -- match_into (hit path, arg extraction) --------------------------------
     {
         let mut group = c.benchmark_group("drain3");
         group.throughput(Throughput::Elements(merge_lines.len() as u64));
@@ -130,7 +121,6 @@ fn bench_drain3(c: &mut Criterion) {
         group.finish();
     }
 
-    // -- match_miss (reject path, unknown first token) ------------------------
     let miss_lines: Vec<String> = merge_lines
         .iter()
         .map(|l| format!("zzz-unknown {}", l))
@@ -154,11 +144,10 @@ fn bench_drain3(c: &mut Criterion) {
         group.finish();
     }
 
-    // -- Bigdict workload (30K lines, ~780 unique first tokens) ---------------
     rng = Rng::new(99);
     let mut big_lines = Vec::with_capacity(30_000);
     for i in 0..30_000 {
-        let tc = 6 + i % 8; // 6..13 tokens, spreads across 8 buckets
+        let tc = 6 + i % 8;
         let a = b'a' + ((i / 676) % 26) as u8;
         let b = b'a' + ((i / 26) % 26) as u8;
         let c = b'a' + (i % 26) as u8;
@@ -179,7 +168,6 @@ fn bench_drain3(c: &mut Criterion) {
 
     let matcher_big = train(&big_lines, Config::default()).unwrap();
 
-    // -- match_bigdict_hit ----------------------------------------------------
     {
         let mut group = c.benchmark_group("drain3");
         group.throughput(Throughput::Elements(big_lines.len() as u64));
@@ -199,7 +187,6 @@ fn bench_drain3(c: &mut Criterion) {
         group.finish();
     }
 
-    // -- match_bigdict_miss ---------------------------------------------------
     let big_miss: Vec<String> = big_lines
         .iter()
         .map(|l| format!("zzzzz-unknown {}", l))
@@ -223,7 +210,6 @@ fn bench_drain3(c: &mut Criterion) {
         group.finish();
     }
 
-    // -- concurrent_match (multi-threaded find() calls) --------------------------
     {
         let matcher_arc = Arc::new(train(train_merge, Config::default()).unwrap());
         let lines_arc = Arc::new(merge_lines.clone());

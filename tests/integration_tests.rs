@@ -1,10 +1,6 @@
-// Copyright 2026 Akshat Agarwal. Licensed under Apache-2.0.
-
 use drain3::{train, Config, Error};
 use std::collections::HashMap;
 
-/// Expand a dense Template into its full token sequence, inserting
-/// `param_str` at each position marked in `params`.
 fn render_template_placeholders(t: &drain3::Template, param_str: &str) -> String {
     let mut out: Vec<String> = Vec::with_capacity(t.token_count());
     let mut dense_idx = 0;
@@ -19,9 +15,6 @@ fn render_template_placeholders(t: &drain3::Template, param_str: &str) -> String
     out.join(" ")
 }
 
-// -----------------------------------------------------------------
-// Reference behaviour: scenarios ported from logpai/Drain3 test_drain.py
-// -----------------------------------------------------------------
 #[test]
 fn logpai_sshd_scenario() {
     let samples: Vec<String> = vec![
@@ -39,7 +32,7 @@ fn logpai_sshd_scenario() {
             .into(),
     ];
     let cfg = Config::builder()
-        .similarity_threshold(0.4) // logpai default
+        .similarity_threshold(0.4)
         .build();
     let m = train(&samples, cfg.clone()).unwrap();
     let mut want: HashMap<String, usize> = HashMap::new();
@@ -132,10 +125,10 @@ fn logpai_match_only() {
     )
     .unwrap();
     let cases: Vec<(&str, usize)> = vec![
-        ("aa aa tt", 1), // wildcard absorbs tt
-        ("xx yy zz", 2), // exact
-        ("xx yy rr", 0), // literal mismatch
-        ("nothing", 0), // unknown token count
+        ("aa aa tt", 1),
+        ("xx yy zz", 2),
+        ("xx yy rr", 0),
+        ("nothing", 0),
     ];
     for (line, want) in cases {
         let id = m.match_id(line);
@@ -154,9 +147,6 @@ fn logpai_match_only() {
     }
 }
 
-// -----------------------------------------------------------------
-// Properties
-// -----------------------------------------------------------------
 #[test]
 fn deterministic_templates() {
     let samples: Vec<String> = vec![
@@ -188,12 +178,10 @@ fn zero_thresholds_are_valid() {
         .match_threshold(0.0)
         .build();
     let m = train(&["A B C".into(), "A B D".into()], cfg).unwrap();
-    // match_threshold=0.0 accepts any tree-routable candidate.
     assert!(
         m.match_id("A X Y").is_some(),
         "expected match with 0.0 match threshold"
     );
-    // similarity_threshold=0.0 merges aggressively: one template.
     assert_eq!(
         m.templates().len(),
         1,
@@ -221,7 +209,6 @@ fn max_clusters() {
         matches!(err, Error::MaxClustersReached { .. }),
         "expected MaxClustersReached"
     );
-    // Uncapped training succeeds and produces more templates.
     let cfg = Config::builder().max_clusters(0).build();
     let full = train(&lines, cfg).unwrap();
     assert!(
@@ -231,9 +218,6 @@ fn max_clusters() {
     );
 }
 
-// -----------------------------------------------------------------
-// Config validation
-// -----------------------------------------------------------------
 #[test]
 fn train_validation() {
     let cfg = Config::builder().depth(2).build();
@@ -264,9 +248,6 @@ fn zero_value_config_is_rejected() {
     );
 }
 
-// -----------------------------------------------------------------
-// Features
-// -----------------------------------------------------------------
 #[test]
 fn extra_delimiters() {
     let cfg = Config::builder()

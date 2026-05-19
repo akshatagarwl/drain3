@@ -137,19 +137,19 @@ pub(crate) struct ClusterId(pub(crate) usize);
 /// Controls training and matching behavior.
 #[derive(Debug, Clone, PartialEq, bon::Builder)]
 pub struct Config {
-    #[builder(default = 4)]
+    #[builder(default = DEFAULT_DEPTH)]
     depth: usize,
-    #[builder(default = 0.5)]
+    #[builder(default = DEFAULT_SIMILARITY_THRESHOLD)]
     similarity_threshold: f64,
-    #[builder(default = 1.0)]
+    #[builder(default = DEFAULT_MATCH_THRESHOLD)]
     match_threshold: f64,
-    #[builder(default = 100)]
+    #[builder(default = DEFAULT_MAX_CHILDREN)]
     max_children: usize,
-    #[builder(default = 64)]
+    #[builder(default = DEFAULT_MAX_TOKENS)]
     max_tokens: usize,
-    #[builder(default = 1024)]
+    #[builder(default = DEFAULT_MAX_BYTES)]
     max_bytes: usize,
-    #[builder(default = 0)]
+    #[builder(default = DEFAULT_MAX_CLUSTERS)]
     max_clusters: usize,
     #[builder(default = "<*>".to_string())]
     param_string: String,

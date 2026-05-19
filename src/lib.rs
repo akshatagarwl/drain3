@@ -459,8 +459,7 @@ impl Matcher {
     }
     /// Template by cluster id.
     pub fn template_for_id(&self, id: usize) -> Option<Template> {
-        let c = self.clusters.get(id)?.as_ref()?;
-        Some(c.to_template(&self.interner, self.param_id))
+        self.clusters.get(id)?.as_ref()?.to_template(&self.interner, self.param_id).into()
     }
     fn tokenize_input(&self, content: &str) -> Option<Vec<String>> {
         if content.len() > self.cfg.max_bytes {
@@ -631,7 +630,7 @@ impl Matcher {
             }
 
             for &idx in &c.non_param_idx {
-                if Some(idx) == anchor0_pos || Some(idx) == anchor1_pos {
+                if anchor0_pos == Some(idx) || anchor1_pos == Some(idx) {
                     continue;
                 }
                 if c.token_str[idx] == tokens[idx] {
@@ -701,7 +700,7 @@ impl Matcher {
                 }
                 if cluster.token_str[i] != *tok {
                     cluster.token_ids[i] = self.param_id;
-                    cluster.token_str[i] = self.cfg.param_string.to_string();
+                    cluster.token_str[i] = self.cfg.param_string.clone();
                     cluster.param_count += 1;
                     changed = true;
                 }
@@ -842,7 +841,7 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
         let mut dense_idx = 0;
         for (i, slot) in full.iter_mut().enumerate().take(t.token_count()) {
             if t.is_param(i) {
-                *slot = m.cfg.param_string.to_string();
+                *slot = m.cfg.param_string.clone();
             } else {
                 *slot = t.tokens()[dense_idx].clone();
                 dense_idx += 1;

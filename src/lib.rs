@@ -93,6 +93,18 @@ impl TokenId {
     }
 }
 
+impl From<TokenId> for usize {
+    fn from(id: TokenId) -> Self {
+        id.0 as usize
+    }
+}
+
+impl From<usize> for TokenId {
+    fn from(s: usize) -> Self {
+        TokenId(s as u64)
+    }
+}
+
 // ── Config defaults ───────────────────────────────────────────────────────────
 
 /// Default prefix tree depth. Must be >= 3.
@@ -143,6 +155,18 @@ const PREFILTER_CAPACITY: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ClusterId(pub(crate) usize);
+
+impl From<ClusterId> for usize {
+    fn from(id: ClusterId) -> Self {
+        id.0
+    }
+}
+
+impl From<usize> for ClusterId {
+    fn from(s: usize) -> Self {
+        ClusterId(s)
+    }
+}
 
 /// Controls training and matching behavior.
 #[derive(Debug, Clone, PartialEq, bon::Builder)]
@@ -427,7 +451,7 @@ impl Matcher {
     /// [`matcher_from_templates`] for typical use.
     pub fn new(cfg: Config) -> Self {
         let mut interner = StringInterner::new();
-        let param_id = TokenId::from_usize(interner.get_or_intern(cfg.param_string()));
+        let param_id = TokenId::from(interner.get_or_intern(cfg.param_string()));
         Self {
             cfg: cfg.clone(),
             templates: Vec::new(),
@@ -445,11 +469,11 @@ impl Matcher {
     fn resolve_token_id(&self, token: &str) -> TokenId {
         self.interner
             .get(token)
-            .map(TokenId::from_usize)
+            .map(TokenId::from)
             .unwrap_or(self.param_id)
     }
     fn intern_token(&mut self, token: &str) -> TokenId {
-        TokenId::from_usize(self.interner.get_or_intern(token))
+        TokenId::from(self.interner.get_or_intern(token))
     }
     fn intern_token_ids(&mut self, tokens: &[String], dst: &mut Vec<TokenId>) {
         dst.clear();

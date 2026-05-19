@@ -144,11 +144,11 @@ pub fn prefilter_candidates_compact<'a>(
     if tc > 0 {
         let first_id = interner
             .get(&tokens[0])
-            .map(TokenId::from_usize)
+            .map(TokenId::from)
             .unwrap_or(param_id);
         let last_id = interner
             .get(&tokens[tc - 1])
-            .map(TokenId::from_usize)
+            .map(TokenId::from)
             .unwrap_or(param_id);
         let first_known = first_id != param_id;
         let last_known = last_id != param_id;
@@ -217,11 +217,5 @@ fn sorted_token_id_keys(
 ) -> (Vec<TokenId>, Vec<Vec<ClusterId>>) {
     let mut items: Vec<(TokenId, Vec<ClusterId>)> = m.into_iter().collect();
     items.sort_unstable_by_key(|(k, _)| *k);
-    let mut keys = Vec::with_capacity(items.len());
-    let mut vals = Vec::with_capacity(items.len());
-    for (k, v) in items {
-        keys.push(k);
-        vals.push(v);
-    }
-    (keys, vals)
+    items.into_iter().unzip()
 }

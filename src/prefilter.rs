@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Cluster, ClusterId, TokenId};
+use crate::{Cluster, ClusterId, TokenId, StringInterner, BucketBackend};
 
 /** Bucket of cluster ids indexed by first / last token for a single token-count
  *  length. Built once after training, read-only during matching. */
@@ -109,7 +109,8 @@ pub fn rebuild_match_prefilter(
  *  indexes. Returns `None` when no candidates exist. */
 pub fn prefilter_candidates_compact<'a>(
     buckets: &'a [PrefilterBucket],
-    dict_ids: &HashMap<String, TokenId>,
+    interner: &'a StringInterner<BucketBackend<usize>>,
+    param_id: TokenId,
     tokens: &[String],
     dst: &'a mut Vec<ClusterId>,
 ) -> Option<&'a [ClusterId]> {
@@ -122,16 +123,16 @@ pub fn prefilter_candidates_compact<'a>(
     let mut first_last = &[][..];
 
     if tc > 0 {
-        let first_id = dict_ids
+        let first_id = interner
             .get(&tokens[0])
-            .copied()
-            .unwrap_or(crate::UNKNOWN_TOKEN_ID);
-        let last_id = dict_ids
+            .map(TokenId::from_usize)
+            .unwrap_or(param_id);
+        let last_id = interner
             .get(&tokens[tc - 1])
-            .copied()
-            .unwrap_or(crate::UNKNOWN_TOKEN_ID);
-        let first_known = first_id != crate::UNKNOWN_TOKEN_ID;
-        let last_known = last_id != crate::UNKNOWN_TOKEN_ID;
+            .map(TokenId::from_usize)
+            .unwrap_or(param_id);
+        let first_known = first_id != param_id;
+        let last_known = last_id != param_id;
 
         if first_known {
             first = search_sorted_token_id(&b.first_keys, &b.first_vals, first_id);

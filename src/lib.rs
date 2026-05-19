@@ -77,11 +77,20 @@ pub enum Error {
     LineTooLong { length: usize, max_bytes: usize },
 }
 
-/// Sentinel for tokens that are not present in the dictionary.
-pub(crate) const UNKNOWN_TOKEN_ID: TokenId = TokenId(0);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct TokenId(pub(crate) u64);
+
+pub(crate) const UNKNOWN_TOKEN_ID: TokenId = TokenId(0);
+
+impl TokenId {
+    pub(crate) fn to_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    pub(crate) fn from_usize(s: usize) -> Self {
+        TokenId(s as u64)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ClusterId(pub(crate) usize);
@@ -308,7 +317,11 @@ impl Cluster {
             }
         }
     }
-    fn to_template(&self, id_to_string: &[String], param_id: TokenId) -> Template {
+    fn to_template(
+        &self,
+        interner: &StringInterner<BucketBackend<usize>>,
+        param_id: TokenId,
+    ) -> Template {
         let token_count = self.token_ids.len();
         let mut params = vec![false; token_count];
         let mut dense = Vec::with_capacity(token_count - self.param_count);
@@ -316,7 +329,7 @@ impl Cluster {
             if tid == param_id {
                 params[i] = true;
             } else {
-                dense.push(id_to_string[tid.0 as usize].clone());
+                dense.push(interner.resolve(tid.to_usize()).unwrap().to_string());
             }
         }
         Template {
@@ -350,15 +363,12 @@ pub struct Matcher {
     nodes: Vec<Node>,
     root_by_len: Vec<Option<usize>>,
     clusters: Vec<Option<Cluster>>,
-    dict: HashMap<String, TokenId>,
-    next_token_id: TokenId,
     param_id: TokenId,
     next_cluster_id: ClusterId,
     min_match_scores: Vec<usize>,
     prefilter_buckets: Vec<prefilter::PrefilterBucket>,
     has_param_first: bool,
     interner: StringInterner<BucketBackend<usize>>,
-    id_to_string: Vec<String>,
 }
 impl Matcher {
     /// Create a new unfinalized matcher with the given config.
@@ -367,40 +377,30 @@ impl Matcher {
     /// called. Prefer the crate-level constructors [`train`] or
     /// [`matcher_from_templates`] for typical use.
     pub fn new(cfg: Config) -> Self {
-        let mut m = Self {
+        let mut interner = StringInterner::new();
+        let param_id = TokenId::from_usize(interner.get_or_intern(cfg.param_string()));
+        Self {
             cfg: cfg.clone(),
             templates: Vec::new(),
             nodes: Vec::new(),
             root_by_len: Vec::new(),
-            clusters: vec![None], // 0 is sentinel
-            dict: HashMap::new(),
-            next_token_id: TokenId(1),
-            param_id: TokenId(0),
+            clusters: vec![None],
+            param_id,
             next_cluster_id: ClusterId(1),
             min_match_scores: Vec::new(),
             prefilter_buckets: Vec::new(),
             has_param_first: false,
-            interner: StringInterner::new(),
-            id_to_string: vec![String::new()], // index 0 = empty string placeholder
-        };
-        m.param_id = m.intern_token(cfg.param_string());
-        m
+            interner,
+        }
     }
     fn resolve_token_id(&self, token: &str) -> TokenId {
-        self.dict.get(token).copied().unwrap_or(self.param_id)
+        self.interner
+            .get(token)
+            .map(TokenId::from_usize)
+            .unwrap_or(self.param_id)
     }
     fn intern_token(&mut self, token: &str) -> TokenId {
-        if let Some(&id) = self.dict.get(token) {
-            return id;
-        }
-        let id = self.next_token_id;
-        self.next_token_id = TokenId(self.next_token_id.0 + 1);
-        // Intern the string for deduplication
-        self.interner.get_or_intern(token);
-        // Store the string for reverse lookup
-        self.id_to_string.push(token.to_string());
-        self.dict.insert(token.to_string(), id);
-        id
+        TokenId::from_usize(self.interner.get_or_intern(token))
     }
     fn intern_token_ids(&mut self, tokens: &[String], dst: &mut Vec<TokenId>) {
         dst.clear();
@@ -455,7 +455,7 @@ impl Matcher {
     /// Template by cluster id.
     pub fn template_for_id(&self, id: usize) -> Option<Template> {
         let c = self.clusters.get(id)?.as_ref()?;
-        Some(c.to_template(&self.id_to_string, self.param_id))
+        Some(c.to_template(&self.interner, self.param_id))
     }
     fn tokenize_input(&self, content: &str) -> Option<Vec<String>> {
         if content.len() > self.cfg.max_bytes() {
@@ -477,12 +477,11 @@ impl Matcher {
         }
     }
     fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
-        if !self.has_param_first && self.cfg.extra_delimiters().is_empty()
-            && !self
-                .dict
-                .contains_key(&line[..line.find(' ').unwrap_or(line.len())])
-        {
-            return (None, Vec::new());
+        if !self.has_param_first && self.cfg.extra_delimiters().is_empty() {
+            let first_tok = &line[..line.find(' ').unwrap_or(line.len())];
+            if self.interner.get(first_tok).is_none() {
+                return (None, Vec::new());
+            }
         }
         let Some(tokens) = self.tokenize_input(line) else {
             return (None, Vec::new());
@@ -495,7 +494,8 @@ impl Matcher {
             let mut candidates = Vec::new();
             if let Some(ids) = prefilter::prefilter_candidates_compact(
                 &self.prefilter_buckets,
-                &self.dict,
+                &self.interner,
+                self.param_id,
                 &tokens,
                 &mut candidates,
             ) {
@@ -698,7 +698,7 @@ impl Matcher {
             let cluster = self.clusters[cid.0]
                 .as_ref()
                 .ok_or(Error::ClusterNotFound { id: cid.0 })?;
-            return Ok(cluster.to_template(&self.id_to_string, self.param_id));
+            return Ok(cluster.to_template(&self.interner, self.param_id));
         }
         if let Some(c) =
             self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold(), false)
@@ -723,7 +723,7 @@ impl Matcher {
                 cluster.rebuild_non_param_idx(self.param_id);
             }
             cluster.count += 1;
-            return Ok(cluster.to_template(&self.id_to_string, self.param_id));
+            return Ok(cluster.to_template(&self.interner, self.param_id));
         }
         if self.cfg.max_clusters() > 0 && self.next_cluster_id.0 > self.cfg.max_clusters() {
             return Err(Error::MaxClustersReached {
@@ -734,7 +734,7 @@ impl Matcher {
         let cluster = self.clusters[cid.0]
             .as_ref()
             .ok_or(Error::ClusterNotFound { id: cid.0 })?;
-        Ok(cluster.to_template(&self.id_to_string, self.param_id))
+        Ok(cluster.to_template(&self.interner, self.param_id))
     }
     /// Read-only lookup: find the best matching template for a line without
     /// mutating the matcher.
@@ -742,7 +742,7 @@ impl Matcher {
     /// Returns `None` if no cluster matches.
     pub fn find(&self, content: &str) -> Option<Template> {
         let (cluster, _) = self.find_match(content);
-        cluster.map(|c| c.to_template(&self.id_to_string, self.param_id))
+        cluster.map(|c| c.to_template(&self.interner, self.param_id))
     }
     fn add_seq_to_prefix_tree(&mut self, cluster_id: ClusterId) -> Result<(), Error> {
         let cluster = self.clusters[cluster_id.0]
@@ -805,7 +805,7 @@ impl Matcher {
             let Some(c) = self.clusters[id].as_ref() else {
                 continue;
             };
-            out.push(c.to_template(&self.id_to_string, self.param_id));
+            out.push(c.to_template(&self.interner, self.param_id));
         }
         out.sort_by_key(|b| std::cmp::Reverse(b.count()));
         self.templates = out;

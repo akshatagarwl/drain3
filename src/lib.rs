@@ -246,13 +246,13 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            depth: 4,
-            similarity_threshold: 0.5,
-            match_threshold: 1.0,
-            max_children: 100,
-            max_tokens: 64,
-            max_bytes: 1024,
-            max_clusters: 0,
+            depth: DEFAULT_DEPTH,
+            similarity_threshold: DEFAULT_SIMILARITY_THRESHOLD,
+            match_threshold: DEFAULT_MATCH_THRESHOLD,
+            max_children: DEFAULT_MAX_CHILDREN,
+            max_tokens: DEFAULT_MAX_TOKENS,
+            max_bytes: DEFAULT_MAX_BYTES,
+            max_clusters: DEFAULT_MAX_CLUSTERS,
             param_string: "<*>".to_string(),
             parametrize_numeric_tokens: true,
             extra_delimiters: Vec::new(),

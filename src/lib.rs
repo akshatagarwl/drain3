@@ -208,7 +208,7 @@ impl Config {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        if self.depth < 3 {
+        if self.depth < MIN_DEPTH {
             return Err(Error::InvalidDepth { got: self.depth });
         }
         if !(0.0..=1.0).contains(&self.similarity_threshold) {
@@ -221,17 +221,17 @@ impl Config {
                 got: self.match_threshold,
             });
         }
-        if self.max_children < 2 {
+        if self.max_children < MIN_MAX_CHILDREN {
             return Err(Error::InvalidMaxChildren {
                 got: self.max_children,
             });
         }
-        if self.max_tokens < 1 {
+        if self.max_tokens < MIN_LINE_LIMIT {
             return Err(Error::InvalidMaxTokens {
                 got: self.max_tokens,
             });
         }
-        if self.max_bytes < 1 {
+        if self.max_bytes < MIN_LINE_LIMIT {
             return Err(Error::InvalidMaxBytes {
                 got: self.max_bytes,
             });

@@ -96,10 +96,6 @@ impl From<TokenId> for usize {
     }
 }
 
-// ── Config defaults ───────────────────────────────────────────────────────────
-
-/// Default prefix tree depth. Must be >= 3.
-/// Validated in [`Config::validate`].
 const DEFAULT_DEPTH: usize = 4;
 
 /// Default similarity threshold for training (0.0–1.0).
@@ -134,10 +130,6 @@ const MIN_MAX_CHILDREN: usize = 2;
 /// Minimum allowed max_tokens and max_bytes value.
 const MIN_LINE_LIMIT: usize = 1;
 
-// ── Internal constants ─────────────────────────────────────────────────────────
-
-/// Stack-allocated token batch size for the fast path in tree search.
-/// Tokens at or below this count use a fixed-size array to avoid heap allocation.
 const INLINE_TOKEN_BATCH_SIZE: usize = 128;
 
 /// Stack capacity for prefilter candidate buffer.
@@ -282,7 +274,6 @@ pub(crate) struct Cluster {
     param_count: usize,
     token_str: Vec<String>,
     token_ids: Vec<TokenId>,
-    /// Indices of non-param tokens, for fast scoring.
     non_param_idx: Vec<usize>,
     anchor0: Option<usize>,
     anchor1: Option<usize>,
@@ -390,11 +381,6 @@ pub struct Matcher {
     interner: StringInterner<BucketBackend<usize>>,
 }
 impl Matcher {
-    /// Create a new unfinalized matcher with the given config.
-    ///
-    /// The matcher is not ready for matching until `finalize_training` is
-    /// called. Prefer the crate-level constructors [`train`] or
-    /// [`matcher_from_templates`] for typical use.
     pub fn new(cfg: Config) -> Self {
         let mut interner = StringInterner::new();
         let param_id = TokenId::from(interner.get_or_intern(&cfg.param_string));
@@ -690,11 +676,6 @@ impl Matcher {
         self.add_seq_to_prefix_tree(id)?;
         Ok(id)
     }
-    /// Add a single log line to an unfinalized matcher.
-    ///
-    /// Returns the [`Template`] for the matched or newly created cluster.
-    /// Returns an error if the line is too long, has too many tokens, or an
-    /// internal error occurs.
     pub fn add_log_message(&mut self, content: &str) -> Result<Template, Error> {
         let tokens = self.tokenize_input(content)
             .ok_or(Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes })?;
@@ -742,10 +723,6 @@ impl Matcher {
             .ok_or(Error::ClusterNotFound { id: cid.0 })?;
         Ok(cluster.to_template(&self.interner, self.param_id))
     }
-    /// Read-only lookup: find the best matching template for a line without
-    /// mutating the matcher.
-    ///
-    /// Returns `None` if no cluster matches.
     pub fn find(&self, content: &str) -> Option<Template> {
         let (cluster, _) = self.find_match(content);
         cluster.map(|c| c.to_template(&self.interner, self.param_id))
@@ -907,7 +884,7 @@ fn tokenize_whitespace_count(content: &str, dst: &mut Vec<String>, max_tokens: u
         );
         start = i + 1;
         if count >= max_tokens {
-            return count + 1; // signal overflow
+            return count + 1;
         }
         count += 1;
     }

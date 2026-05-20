@@ -225,7 +225,7 @@ fn bench_drain3(c: &mut Criterion) {
                             thread::spawn(move || {
                                 let mut matched = 0usize;
                                 for line in lines.iter() {
-                                    if m.find(line).is_some() {
+                                    if m.find(line).2 {
                                         matched += 1;
                                     }
                                 }

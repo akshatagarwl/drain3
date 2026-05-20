@@ -8,7 +8,7 @@ fn render_template_placeholders(t: &drain3::Template, param_str: &str) -> String
         if t.is_param(i) {
             out.push(param_str.to_string());
         } else {
-            out.push(t.tokens()[dense_idx].clone());
+            out.push(t.tokens()[dense_idx].to_string());
             dense_idx += 1;
         }
     }
@@ -237,7 +237,7 @@ fn zero_value_config_is_rejected() {
         .max_tokens(0)
         .max_bytes(0)
         .max_clusters(0)
-        .param_string(String::new())
+        .param_string(String::new().into())
         .parametrize_numeric_tokens(false)
         .extra_delimiters(vec![])
         .enable_match_prefilter(false)

@@ -26,6 +26,7 @@
 use snafu::Snafu;
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use string_interner::backend::BucketBackend;
 use string_interner::StringInterner;
 
@@ -168,8 +169,8 @@ pub struct Config {
     pub max_bytes: usize,
     #[builder(default = DEFAULT_MAX_CLUSTERS)]
     pub max_clusters: usize,
-    #[builder(default = "<*>".to_string())]
-    pub param_string: String,
+    #[builder(default = Arc::from("<*>"))]
+    pub param_string: Arc<str>,
     #[builder(default = true)]
     pub parametrize_numeric_tokens: bool,
     #[builder(default)]
@@ -225,7 +226,7 @@ impl Default for Config {
             max_tokens: DEFAULT_MAX_TOKENS,
             max_bytes: DEFAULT_MAX_BYTES,
             max_clusters: DEFAULT_MAX_CLUSTERS,
-            param_string: "<*>".to_string(),
+            param_string: "<*>".into(),
             parametrize_numeric_tokens: true,
             extra_delimiters: Vec::new(),
             enable_match_prefilter: true,
@@ -237,7 +238,7 @@ impl Default for Config {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Template {
     id: usize,
-    tokens: Vec<String>,
+    tokens: Vec<Arc<str>>,
     params: Vec<bool>,
     token_count: usize,
     count: usize,
@@ -249,7 +250,7 @@ impl Template {
         self.id
     }
     /// Dense token list: only non-param tokens, in order.
-    pub fn tokens(&self) -> &[String] {
+    pub fn tokens(&self) -> &[Arc<str>] {
         &self.tokens
     }
     /// Whether position `idx` is a param placeholder.
@@ -272,7 +273,7 @@ pub(crate) struct Cluster {
     id: ClusterId,
     count: usize,
     param_count: usize,
-    token_str: Vec<String>,
+    token_str: Vec<Arc<str>>,
     token_ids: Vec<TokenId>,
     non_param_idx: Vec<usize>,
     anchor0: Option<usize>,
@@ -281,7 +282,7 @@ pub(crate) struct Cluster {
 impl Cluster {
     fn new(
         id: ClusterId,
-        token_str: Vec<String>,
+        token_str: Vec<Arc<str>>,
         token_ids: Vec<TokenId>,
         param_id: TokenId,
     ) -> Self {
@@ -315,18 +316,6 @@ impl Cluster {
             None
         };
     }
-    fn extract_args_into(&self, line_tokens: &[String], param_id: TokenId, dst: &mut Vec<String>) {
-        if self.token_ids.is_empty() || line_tokens.is_empty() || self.param_count == 0 {
-            return;
-        }
-        let limit = self.token_ids.len().min(line_tokens.len());
-        dst.clear();
-        for (i, tok) in line_tokens.iter().enumerate().take(limit) {
-            if self.token_ids[i] == param_id {
-                dst.push(tok.clone());
-            }
-        }
-    }
     fn to_template(
         &self,
         interner: &StringInterner<BucketBackend<usize>>,
@@ -339,7 +328,7 @@ impl Cluster {
             if tid == param_id {
                 params[i] = true;
             } else {
-                dense.push(interner.resolve(usize::from(tid)).unwrap().to_string());
+                dense.push(Arc::from(interner.resolve(usize::from(tid)).unwrap()));
             }
         }
         Template {
@@ -379,6 +368,7 @@ pub struct Matcher {
     prefilter_buckets: Vec<prefilter::PrefilterBucket>,
     has_param_first: bool,
     interner: StringInterner<BucketBackend<usize>>,
+    token_buf: Mutex<Vec<Arc<str>>>,
 }
 impl Matcher {
     pub fn new(cfg: Config) -> Self {
@@ -396,18 +386,19 @@ impl Matcher {
             prefilter_buckets: Vec::new(),
             has_param_first: false,
             interner,
+            token_buf: Mutex::new(Vec::new()),
         }
     }
-    fn resolve_token_id(&self, token: &str) -> TokenId {
+    fn resolve_token_id<T: AsRef<str>>(&self, token: T) -> TokenId {
         self.interner
-            .get(token)
+            .get(token.as_ref())
             .map(TokenId::from)
             .unwrap_or(self.param_id)
     }
     fn intern_token(&mut self, token: &str) -> TokenId {
         TokenId::from(self.interner.get_or_intern(token))
     }
-    fn intern_token_ids(&mut self, tokens: &[String], dst: &mut Vec<TokenId>) {
+    fn intern_token_ids(&mut self, tokens: &[Arc<str>], dst: &mut Vec<TokenId>) {
         dst.clear();
         dst.reserve(tokens.len());
         for t in tokens {
@@ -427,78 +418,52 @@ impl Matcher {
         }
     }
 
-    /// Match a line. Returns `(template_id, extracted_args, matched)`.
     pub fn match_line(&self, line: &str) -> (usize, Vec<String>, bool) {
-        let mut dst = Vec::new();
-        let (id, ok) = self.match_into(line, &mut dst);
-        (id, dst, ok)
-    }
-    /// Like `match_line`, but writes extracted args into `dst`.
-    pub fn match_into(&self, line: &str, dst: &mut Vec<String>) -> (usize, bool) {
-        let (cluster, tokens) = self.find_match(line);
-        if let Some(c) = cluster {
-            let id = c.id.0;
-            c.extract_args_into(&tokens, self.param_id, dst);
-            return (id, true);
-        }
-        (0, false)
-    }
-    /// Match a line, returning only the template id.
-    pub fn match_id(&self, line: &str) -> Option<usize> {
-        self.find_match(line).0.map(|c| c.id.0)
-    }
-    /// Return a deep copy of the matcher's config.
-    pub fn config(&self) -> Config {
-        self.cfg.clone()
-    }
-    /// Return trained templates sorted by descending count.
-    ///
-    /// This is a deep clone — mutations do not affect the matcher.
-    pub fn templates(&self) -> Vec<Template> {
-        self.templates.clone()
-    }
-    /// Template by cluster id.
-    pub fn template_for_id(&self, id: usize) -> Option<Template> {
-        self.clusters.get(id)?.as_ref()?.to_template(&self.interner, self.param_id).into()
-    }
-    fn tokenize_input(&self, content: &str) -> Option<Vec<String>> {
-        if content.len() > self.cfg.max_bytes {
-            return None;
-        }
-
-        let mut tokens = Vec::new();
-        if self.cfg.extra_delimiters.is_empty() {
-            let count =
-                tokenize_whitespace_count(content, &mut tokens, self.cfg.max_tokens);
-            if count == 0 || count > self.cfg.max_tokens {
-                return None;
+        let mut args = Vec::new();
+        let param_id = self.param_id;
+        let (cluster_id, tc) = self.find_match_with_tc(line);
+        if let Some(cid) = cluster_id {
+            let cid_val = cid.0;
+            let _ = cluster_id;
+            let tc_val = tc;
+            let param_positions: Vec<usize>;
+            let id;
+            {
+                let cluster = self.clusters[cid_val].as_ref().unwrap();
+                id = cluster.id.0;
+                param_positions = cluster.token_ids.iter()
+                    .enumerate()
+                    .filter(|(_, &tid)| tid == param_id)
+                    .map(|(i, _)| i)
+                    .collect();
             }
-        } else {
-            tokens = tokenize(
-                content,
-                &self.cfg.extra_delimiters,
-                self.cfg.max_tokens,
-            );
-            if tokens.is_empty() || tokens.len() > self.cfg.max_tokens {
-                return None;
+            let _ = cid;
+            let token_buf = self.token_buf.lock().unwrap();
+            args.reserve(param_positions.len());
+            for pos in param_positions {
+                if pos < tc_val {
+                    args.push(token_buf[pos].to_string());
+                }
             }
+            return (id, args, true);
         }
-
-        Some(tokens)
+        (0, args, false)
     }
-    fn find_match(&self, line: &str) -> (Option<&Cluster>, Vec<String>) {
+
+    fn find_match_with_tc(&self, line: &str) -> (Option<ClusterId>, usize) {
+        let mut token_buf = self.token_buf.lock().unwrap();
+        token_buf.clear();
         if !self.has_param_first && self.cfg.extra_delimiters.is_empty() {
             let first_tok = &line[..line.find(' ').unwrap_or(line.len())];
             if self.interner.get(first_tok).is_none() {
-                return (None, Vec::new());
+                return (None, 0);
             }
         }
-        let Some(tokens) = self.tokenize_input(line) else {
-            return (None, Vec::new());
+        let Some(tc) = self.tokenize_input_internal(&mut token_buf, line) else {
+            return (None, 0);
         };
-        let tc = tokens.len();
         if tc >= self.root_by_len.len() || self.root_by_len[tc].is_none() {
-            return (None, tokens);
+            return (None, tc);
         }
         if self.cfg.enable_match_prefilter && tc < self.prefilter_buckets.len() {
             let mut candidates: SmallVec<[ClusterId; PREFILTER_CAPACITY]> = SmallVec::new();
@@ -506,23 +471,119 @@ impl Matcher {
                 &self.prefilter_buckets,
                 &self.interner,
                 self.param_id,
-                &tokens,
+                &token_buf,
                 &mut candidates,
             )
             .is_some()
             {
-                let cluster =
-                    self.fast_match_strings(&candidates, &tokens, self.cfg.match_threshold, true);
-                return (cluster, tokens);
+                return (self.fast_match_strings(&candidates, &token_buf, self.cfg.match_threshold, true).map(|c| c.id), tc);
             }
-            return (None, tokens);
+            return (None, tc);
         }
-        let cluster = self.tree_search_with_threshold(&tokens, self.cfg.match_threshold, true);
-        (cluster, tokens)
+        let cluster = self.tree_search_with_threshold(&token_buf, self.cfg.match_threshold, true);
+        (cluster.map(|c| c.id), tc)
+    }
+    fn tokenize_input_internal(&self, token_buf: &mut Vec<Arc<str>>, content: &str) -> Option<usize> {
+        if content.len() > self.cfg.max_bytes {
+            return None;
+        }
+        token_buf.clear();
+        if self.cfg.extra_delimiters.is_empty() {
+            let count = tokenize_whitespace_count(content, token_buf, self.cfg.max_tokens);
+            if count == 0 || count > self.cfg.max_tokens {
+                return None;
+            }
+        } else {
+            tokenize(
+                content,
+                &self.cfg.extra_delimiters,
+                self.cfg.max_tokens,
+                token_buf,
+            );
+            if token_buf.is_empty() || token_buf.len() > self.cfg.max_tokens {
+                return None;
+            }
+        }
+        Some(token_buf.len())
+    }
+    pub fn match_into(&self, line: &str, dst: &mut Vec<String>) -> (usize, bool) {
+        let param_id = self.param_id;
+        let (cluster_id, tc) = self.find_match_with_tc(line);
+        if let Some(cid) = cluster_id {
+            let cid_val = cid.0;
+            let _ = cluster_id;
+            let tc_val = tc;
+            let param_positions: Vec<usize>;
+            let id;
+            {
+                let cluster = self.clusters[cid_val].as_ref().unwrap();
+                id = cluster.id.0;
+                param_positions = cluster.token_ids.iter()
+                    .enumerate()
+                    .filter(|(_, &tid)| tid == param_id)
+                    .map(|(i, _)| i)
+                    .collect();
+            }
+            let _ = cid;
+            let token_buf = self.token_buf.lock().unwrap();
+            dst.clear();
+            for pos in param_positions {
+                if pos < tc_val {
+                    dst.push(token_buf[pos].to_string());
+                }
+            }
+            return (id, true);
+        }
+        (0, false)
+    }
+    pub fn match_id(&self, line: &str) -> Option<usize> {
+        self.find_match_with_tc(line).0.map(|c| c.0)
+    }
+    pub fn find(&self, line: &str) -> (usize, Vec<String>, bool) {
+        self.match_line(line)
+    }
+    /// Return a reference to the matcher's config.
+    pub fn config(&self) -> &Config {
+        &self.cfg
+    }
+    /// Return trained templates sorted by descending count.
+    ///
+    /// This is a reference — mutations do not affect the matcher.
+    pub fn templates(&self) -> &[Template] {
+        &self.templates
+    }
+    /// Template by cluster id.
+    pub fn template_for_id(&self, id: usize) -> Option<Template> {
+        self.clusters.get(id)?.as_ref()?.to_template(&self.interner, self.param_id).into()
+    }
+    fn tokenize_input(&self, content: &str) -> Option<usize> {
+        if content.len() > self.cfg.max_bytes {
+            return None;
+        }
+        let mut token_buf = self.token_buf.lock().unwrap();
+        token_buf.clear();
+        if self.cfg.extra_delimiters.is_empty() {
+            let count =
+                tokenize_whitespace_count(content, &mut token_buf, self.cfg.max_tokens);
+            if count == 0 || count > self.cfg.max_tokens {
+                return None;
+            }
+        } else {
+            tokenize(
+                content,
+                &self.cfg.extra_delimiters,
+                self.cfg.max_tokens,
+                &mut token_buf,
+            );
+            if token_buf.is_empty() || token_buf.len() > self.cfg.max_tokens {
+                return None;
+            }
+        }
+        Some(token_buf.len())
     }
     fn tree_search_with_threshold(
         &self,
-        tokens: &[String],
+        tokens: &[Arc<str>],
         threshold: f64,
         include_params: bool,
     ) -> Option<&Cluster> {
@@ -583,7 +644,7 @@ impl Matcher {
     fn fast_match_strings(
         &self,
         cluster_ids: &[ClusterId],
-        tokens: &[String],
+        tokens: &[Arc<str>],
         threshold: f64,
         include_params: bool,
     ) -> Option<&Cluster> {
@@ -662,7 +723,7 @@ impl Matcher {
             None
         }
     }
-    fn create_cluster(&mut self, tokens: Vec<String>) -> Result<ClusterId, Error> {
+    fn create_cluster(&mut self, tokens: Vec<Arc<str>>) -> Result<ClusterId, Error> {
         let mut token_ids = Vec::new();
         self.intern_token_ids(&tokens, &mut token_ids);
         let id = self.next_cluster_id;
@@ -676,25 +737,26 @@ impl Matcher {
         Ok(id)
     }
     pub fn add_log_message(&mut self, content: &str) -> Result<Template, Error> {
-        let tokens = self.tokenize_input(content)
+        let tc = self.tokenize_input(content)
             .ok_or(Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes })?;
-        let tc = tokens.len();
         if tc >= self.root_by_len.len() {
+            let tokens = self.token_buf.lock().unwrap().clone();
             let cid = self.create_cluster(tokens)?;
             let cluster = self.clusters[cid.0]
                 .as_ref()
                 .ok_or(Error::ClusterNotFound { id: cid.0 })?;
             return Ok(cluster.to_template(&self.interner, self.param_id));
         }
+        let token_buf = self.token_buf.lock().unwrap();
         if let Some(c) =
-            self.tree_search_with_threshold(&tokens, self.cfg.similarity_threshold, false)
+            self.tree_search_with_threshold(&token_buf, self.cfg.similarity_threshold, false)
         {
             let cid = c.id;
             let mut changed = false;
             let cluster = self.clusters[cid.0]
                 .as_mut()
                 .ok_or(Error::ClusterNotFound { id: cid.0 })?;
-            for (i, tok) in tokens.iter().enumerate().take(cluster.token_str.len()) {
+            for (i, tok) in token_buf.iter().enumerate().take(cluster.token_str.len()) {
                 if cluster.token_ids[i] == self.param_id {
                     continue;
                 }
@@ -711,20 +773,18 @@ impl Matcher {
             cluster.count += 1;
             return Ok(cluster.to_template(&self.interner, self.param_id));
         }
+        drop(token_buf);
         if self.cfg.max_clusters > 0 && self.next_cluster_id.0 > self.cfg.max_clusters {
             return Err(Error::MaxClustersReached {
                 limit: self.cfg.max_clusters,
             });
         }
+        let tokens = self.token_buf.lock().unwrap().clone();
         let cid = self.create_cluster(tokens)?;
         let cluster = self.clusters[cid.0]
             .as_ref()
             .ok_or(Error::ClusterNotFound { id: cid.0 })?;
         Ok(cluster.to_template(&self.interner, self.param_id))
-    }
-    pub fn find(&self, content: &str) -> Option<Template> {
-        let (cluster, _) = self.find_match(content);
-        cluster.map(|c| c.to_template(&self.interner, self.param_id))
     }
     fn add_seq_to_prefix_tree(&mut self, cluster_id: ClusterId) -> Result<(), Error> {
         let cluster = self.clusters[cluster_id.0]
@@ -837,7 +897,7 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
     m.clusters.resize_with(max_id + 1, || None);
     m.next_cluster_id = ClusterId(max_id + 1);
     for t in &sorted {
-        let mut full = vec![String::new(); t.token_count()];
+        let mut full: Vec<Arc<str>> = vec![Arc::from(""); t.token_count()];
         let mut dense_idx = 0;
         for (i, slot) in full.iter_mut().enumerate().take(t.token_count()) {
             if t.is_param(i) {
@@ -864,7 +924,7 @@ pub fn matcher_from_templates(cfg: Config, templates: &[Template]) -> Result<Mat
 /// Does **not** trim and **does** preserve empty tokens, matching Go's
 /// `tokenizeWhitespaceCount` so that consecutive spaces increase the token
 /// count (and therefore change the tree bucket).
-fn tokenize_whitespace_count(content: &str, dst: &mut Vec<String>, max_tokens: usize) -> usize {
+fn tokenize_whitespace_count(content: &str, dst: &mut Vec<Arc<str>>, max_tokens: usize) -> usize {
     if content.is_empty() || max_tokens == 0 {
         return 0;
     }
@@ -876,32 +936,27 @@ fn tokenize_whitespace_count(content: &str, dst: &mut Vec<String>, max_tokens: u
         if bytes[i] != b' ' {
             continue;
         }
-        dst.push(
-            std::str::from_utf8(&bytes[start..i])
-                .unwrap()
-                .to_string(),
-        );
+        dst.push(Arc::from(
+            std::str::from_utf8(&bytes[start..i]).unwrap(),
+        ));
         start = i + 1;
         if count >= max_tokens {
             return count + 1;
         }
         count += 1;
     }
-    dst.push(
-        std::str::from_utf8(&bytes[start..])
-            .unwrap()
-            .to_string(),
-    );
+    dst.push(Arc::from(std::str::from_utf8(&bytes[start..]).unwrap()));
     count
 }
 
 /// Tokenizer used when `extra_delimiters` are configured. Matches Go's
 /// `tokenize`: trim, replace delimiters with spaces, then collapse runs of
 /// spaces and skip empty fields (like `strings.Fields`).
-fn tokenize(content: &str, extra_delimiters: &[String], max_tokens: usize) -> Vec<String> {
+fn tokenize(content: &str, extra_delimiters: &[String], max_tokens: usize, dst: &mut Vec<Arc<str>>) {
+    dst.clear();
     let trimmed = content.trim();
     if trimmed.is_empty() {
-        return Vec::new();
+        return;
     }
     let mut s = trimmed.to_string();
     for d in extra_delimiters {
@@ -909,11 +964,9 @@ fn tokenize(content: &str, extra_delimiters: &[String], max_tokens: usize) -> Ve
             s = s.replace(d, " ");
         }
     }
-    s.split(' ')
-        .filter(|t| !t.is_empty())
-        .take(max_tokens)
-        .map(|t| t.to_string())
-        .collect()
+    for t in s.split(' ').filter(|t| !t.is_empty()).take(max_tokens) {
+        dst.push(Arc::from(t));
+    }
 }
 fn has_numbers(s: &str) -> bool {
     s.bytes().any(|b| b.is_ascii_digit())

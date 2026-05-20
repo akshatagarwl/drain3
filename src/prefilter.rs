@@ -130,7 +130,7 @@ pub fn prefilter_candidates_compact<'a>(
     buckets: &'a [PrefilterBucket],
     interner: &'a StringInterner<BucketBackend<usize>>,
     param_id: TokenId,
-    tokens: &[String],
+    tokens: &[std::sync::Arc<str>],
     dst: &mut SmallVec<[ClusterId; 16]>,
 ) -> Option<()> {
     let tc = tokens.len();
@@ -141,8 +141,8 @@ pub fn prefilter_candidates_compact<'a>(
         return merge_prefilter_groups(&b.any[..], &[], &[], &[], dst);
     }
 
-    let first_id = interner.get(&tokens[0]).map(TokenId::from).unwrap_or(param_id);
-    let last_id = interner.get(&tokens[tc - 1]).map(TokenId::from).unwrap_or(param_id);
+    let first_id = interner.get(tokens[0].as_ref()).map(TokenId::from).unwrap_or(param_id);
+    let last_id = interner.get(tokens[tc - 1].as_ref()).map(TokenId::from).unwrap_or(param_id);
     let first_known = first_id != param_id;
     let last_known = last_id != param_id;
 

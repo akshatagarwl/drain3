@@ -21,3 +21,21 @@ jobs:
       - run: cargo doc --document-private-items --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+  asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --component rust-src && rustup default nightly
+      - run: cargo +nightly test -Zbuild-std
+  lsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --component rust-src && rustup default nightly
+      - run: cargo +nightly test -Zbuild-std
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --component rust-src && rustup default nightly
+      - run: cargo +nightly test -Zbuild-std

@@ -23,8 +23,8 @@
 //! # Ok(())
 //! # }
 //! ```
-use snafu::Snafu;
 use smallvec::SmallVec;
+use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use string_interner::backend::BucketBackend;
@@ -431,7 +431,9 @@ impl Matcher {
             {
                 let cluster = self.clusters[cid_val].as_ref().unwrap();
                 id = cluster.id.0;
-                param_positions = cluster.token_ids.iter()
+                param_positions = cluster
+                    .token_ids
+                    .iter()
                     .enumerate()
                     .filter(|(_, &tid)| tid == param_id)
                     .map(|(i, _)| i)
@@ -476,14 +478,27 @@ impl Matcher {
             )
             .is_some()
             {
-                return (self.fast_match_strings(&candidates, &token_buf, self.cfg.match_threshold, true).map(|c| c.id), tc);
+                return (
+                    self.fast_match_strings(
+                        &candidates,
+                        &token_buf,
+                        self.cfg.match_threshold,
+                        true,
+                    )
+                    .map(|c| c.id),
+                    tc,
+                );
             }
             return (None, tc);
         }
         let cluster = self.tree_search_with_threshold(&token_buf, self.cfg.match_threshold, true);
         (cluster.map(|c| c.id), tc)
     }
-    fn tokenize_input_internal(&self, token_buf: &mut Vec<Arc<str>>, content: &str) -> Option<usize> {
+    fn tokenize_input_internal(
+        &self,
+        token_buf: &mut Vec<Arc<str>>,
+        content: &str,
+    ) -> Option<usize> {
         if content.len() > self.cfg.max_bytes {
             return None;
         }
@@ -518,7 +533,9 @@ impl Matcher {
             {
                 let cluster = self.clusters[cid_val].as_ref().unwrap();
                 id = cluster.id.0;
-                param_positions = cluster.token_ids.iter()
+                param_positions = cluster
+                    .token_ids
+                    .iter()
                     .enumerate()
                     .filter(|(_, &tid)| tid == param_id)
                     .map(|(i, _)| i)
@@ -554,7 +571,11 @@ impl Matcher {
     }
     /// Template by cluster id.
     pub fn template_for_id(&self, id: usize) -> Option<Template> {
-        self.clusters.get(id)?.as_ref()?.to_template(&self.interner, self.param_id).into()
+        self.clusters
+            .get(id)?
+            .as_ref()?
+            .to_template(&self.interner, self.param_id)
+            .into()
     }
     fn tokenize_input(&self, content: &str) -> Option<usize> {
         if content.len() > self.cfg.max_bytes {
@@ -563,8 +584,7 @@ impl Matcher {
         let mut token_buf = self.token_buf.lock().unwrap();
         token_buf.clear();
         if self.cfg.extra_delimiters.is_empty() {
-            let count =
-                tokenize_whitespace_count(content, &mut token_buf, self.cfg.max_tokens);
+            let count = tokenize_whitespace_count(content, &mut token_buf, self.cfg.max_tokens);
             if count == 0 || count > self.cfg.max_tokens {
                 return None;
             }
@@ -665,7 +685,11 @@ impl Matcher {
             }
 
             let param_count = c.param_count;
-            let mut sim_tokens: isize = if include_params { param_count as isize } else { 0 };
+            let mut sim_tokens: isize = if include_params {
+                param_count as isize
+            } else {
+                0
+            };
             let mut remaining = c.non_param_idx.len();
 
             let anchor0_pos = c.anchor0;
@@ -737,8 +761,10 @@ impl Matcher {
         Ok(id)
     }
     pub fn add_log_message(&mut self, content: &str) -> Result<Template, Error> {
-        let tc = self.tokenize_input(content)
-            .ok_or(Error::LineTooLong { length: content.len(), max_bytes: self.cfg.max_bytes })?;
+        let tc = self.tokenize_input(content).ok_or(Error::LineTooLong {
+            length: content.len(),
+            max_bytes: self.cfg.max_bytes,
+        })?;
         if tc >= self.root_by_len.len() {
             let tokens = self.token_buf.lock().unwrap().clone();
             let cid = self.create_cluster(tokens)?;
@@ -799,8 +825,8 @@ impl Matcher {
             self.nodes.push(Node::new());
             self.root_by_len[tc] = Some(idx);
         }
-        let mut cur_idx = self.root_by_len[tc]
-            .ok_or(Error::InternalRootNotInitialized { token_count: tc })?;
+        let mut cur_idx =
+            self.root_by_len[tc].ok_or(Error::InternalRootNotInitialized { token_count: tc })?;
         if tc == 0 {
             self.nodes[cur_idx].cluster_ids.push(cluster_id);
             return Ok(());
@@ -815,8 +841,7 @@ impl Matcher {
                 let node = &self.nodes[cur_idx];
                 if node.children.contains_key(&token_id) {
                     token_id
-                } else if self.cfg.parametrize_numeric_tokens
-                    && has_numbers(&cluster.token_str[i])
+                } else if self.cfg.parametrize_numeric_tokens && has_numbers(&cluster.token_str[i])
                 {
                     self.param_id
                 } else {
@@ -936,9 +961,7 @@ fn tokenize_whitespace_count(content: &str, dst: &mut Vec<Arc<str>>, max_tokens:
         if bytes[i] != b' ' {
             continue;
         }
-        dst.push(Arc::from(
-            std::str::from_utf8(&bytes[start..i]).unwrap(),
-        ));
+        dst.push(Arc::from(std::str::from_utf8(&bytes[start..i]).unwrap()));
         start = i + 1;
         if count >= max_tokens {
             return count + 1;
@@ -952,7 +975,12 @@ fn tokenize_whitespace_count(content: &str, dst: &mut Vec<Arc<str>>, max_tokens:
 /// Tokenizer used when `extra_delimiters` are configured. Matches Go's
 /// `tokenize`: trim, replace delimiters with spaces, then collapse runs of
 /// spaces and skip empty fields (like `strings.Fields`).
-fn tokenize(content: &str, extra_delimiters: &[String], max_tokens: usize, dst: &mut Vec<Arc<str>>) {
+fn tokenize(
+    content: &str,
+    extra_delimiters: &[String],
+    max_tokens: usize,
+    dst: &mut Vec<Arc<str>>,
+) {
     dst.clear();
     let trimmed = content.trim();
     if trimmed.is_empty() {

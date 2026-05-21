@@ -31,9 +31,7 @@ fn logpai_sshd_scenario() {
         "Dec 10 07:28:03 LabSZ sshd[24245]: input_userauth_request: invalid user pgadmin [preauth]"
             .into(),
     ];
-    let cfg = Config::builder()
-        .similarity_threshold(0.4)
-        .build();
+    let cfg = Config::builder().similarity_threshold(0.4).build();
     let m = train(&samples, cfg.clone()).unwrap();
     let mut want: HashMap<String, usize> = HashMap::new();
     want.insert(
@@ -250,11 +248,8 @@ fn zero_value_config_is_rejected() {
 
 #[test]
 fn extra_delimiters() {
-    let cfg = Config::builder()
-        .extra_delimiters(vec!["=".into()])
-        .build();
-    let m = train(&["k=v a=1".into(), "k=v a=2".into()], cfg)
-        .unwrap();
+    let cfg = Config::builder().extra_delimiters(vec!["=".into()]).build();
+    let m = train(&["k=v a=1".into(), "k=v a=2".into()], cfg).unwrap();
     let (id, args, ok) = m.match_line("k=v a=7");
     assert!(ok, "expected match");
     assert_eq!(id, 1, "expected template id 1, got {id}");
@@ -288,15 +283,11 @@ fn match_into() {
 
 #[test]
 fn config_and_templates_are_copied() {
-    let cfg = Config::builder()
-        .extra_delimiters(vec!["=".into()])
-        .build();
-    let m = train(&["k=v a=1".into(), "k=v a=2".into()], cfg)
-        .unwrap();
+    let cfg = Config::builder().extra_delimiters(vec!["=".into()]).build();
+    let m = train(&["k=v a=1".into(), "k=v a=2".into()], cfg).unwrap();
     let read_cfg = m.config();
     assert_eq!(
-        read_cfg.extra_delimiters[0],
-        "=",
+        read_cfg.extra_delimiters[0], "=",
         "config getter leaked mutable slice"
     );
     let templates = m.templates();

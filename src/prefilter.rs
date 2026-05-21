@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
-use crate::{Cluster, ClusterId, TokenId, StringInterner, BucketBackend};
+use crate::{BucketBackend, Cluster, ClusterId, StringInterner, TokenId};
 
 /// Packs two token IDs into a single 64-bit key for the first-last prefilter index.
 /// Layout: lower 32 bits = first token ID, upper 32 bits = last token ID.
@@ -141,8 +141,14 @@ pub fn prefilter_candidates_compact<'a>(
         return merge_prefilter_groups(&b.any[..], &[], &[], &[], dst);
     }
 
-    let first_id = interner.get(tokens[0].as_ref()).map(TokenId::from).unwrap_or(param_id);
-    let last_id = interner.get(tokens[tc - 1].as_ref()).map(TokenId::from).unwrap_or(param_id);
+    let first_id = interner
+        .get(tokens[0].as_ref())
+        .map(TokenId::from)
+        .unwrap_or(param_id);
+    let last_id = interner
+        .get(tokens[tc - 1].as_ref())
+        .map(TokenId::from)
+        .unwrap_or(param_id);
     let first_known = first_id != param_id;
     let last_known = last_id != param_id;
 

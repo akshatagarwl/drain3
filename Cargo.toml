@@ -1,6 +1,6 @@
 [package]
 name = "drain3"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 authors = ["Akshat Agarwal <hey@akshat.dev>"]
 description = "Fast log template extraction via fixed-depth prefix trees (Rust port of logpai/Drain3)"

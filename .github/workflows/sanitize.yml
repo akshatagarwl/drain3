@@ -11,17 +11,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install nightly
-      - run: RUSTFLAGS="-Z sanitizer=address" cargo test
+      - run: rustup toolchain install nightly && rustup default nightly
+      - run: RUSTFLAGS="-Z sanitizer=address" cargo +nightly test
   lsan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install nightly
-      - run: RUSTFLAGS="-Z sanitizer=leak" cargo test
+      - run: rustup toolchain install nightly && rustup default nightly
+      - run: RUSTFLAGS="-Z sanitizer=leak" cargo +nightly test
   tsan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install nightly
-      - run: RUSTFLAGS="-Z sanitizer=thread" cargo test
+      - run: rustup toolchain install nightly && rustup default nightly
+      - run: RUSTFLAGS="-Z sanitizer=thread" cargo +nightly test

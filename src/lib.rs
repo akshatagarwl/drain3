@@ -493,13 +493,13 @@ impl Matcher {
     }
     fn descend_prefix(
         &self,
-        mut cur_idx: usize,
+        cur_idx: usize,
         tokens: &[Arc<str>],
         max_depth: usize,
         tc: usize,
     ) -> Option<usize> {
-        let mut cur_depth = 1;
-        for tok in tokens {
+        let mut cur_idx = cur_idx;
+        for (cur_depth, tok) in (1..).zip(tokens.iter()) {
             if cur_depth >= max_depth || cur_depth == tc {
                 break;
             }
@@ -510,7 +510,6 @@ impl Matcher {
                 .copied()
                 .or_else(|| self.nodes[cur_idx].children.get(&self.param_id).copied());
             cur_idx = next?;
-            cur_depth += 1;
         }
         Some(cur_idx)
     }

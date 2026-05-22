@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
-use crate::cluster::Cluster;
+use crate::tree::Cluster;
 use crate::{BucketBackend, ClusterId, StringInterner, TokenId};
 
 /// Packs two token IDs into a single 64-bit key for the first-last prefilter index.

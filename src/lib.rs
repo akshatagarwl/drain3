@@ -29,13 +29,13 @@ use std::sync::{Arc, Mutex};
 use string_interner::backend::BucketBackend;
 use string_interner::StringInterner;
 
-mod cluster;
 mod prefilter;
 mod render;
 mod tokenizer;
+mod tree;
 
 pub use render::RenderPlan;
-pub(crate) use cluster::{Cluster, Node};
+pub(crate) use tree::{Cluster, Node};
 
 /// Errors that can occur during training or template reconstruction.
 #[derive(Debug, Snafu)]

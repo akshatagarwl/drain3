@@ -1,7 +1,8 @@
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
-use crate::{BucketBackend, Cluster, ClusterId, StringInterner, TokenId};
+use crate::cluster::Cluster;
+use crate::{BucketBackend, ClusterId, StringInterner, TokenId};
 
 /// Packs two token IDs into a single 64-bit key for the first-last prefilter index.
 /// Layout: lower 32 bits = first token ID, upper 32 bits = last token ID.
@@ -186,15 +187,8 @@ fn merge_prefilter_groups(
     }
     if non_empty == 1 {
         dst.clear();
-        if !any.is_empty() {
-            dst.extend_from_slice(any);
-        } else if !first.is_empty() {
-            dst.extend_from_slice(first);
-        } else if !last.is_empty() {
-            dst.extend_from_slice(last);
-        } else {
-            dst.extend_from_slice(first_last);
-        }
+        let group = groups.into_iter().find(|g| !g.is_empty()).unwrap();
+        dst.extend_from_slice(group);
         return Some(());
     }
     dst.clear();

@@ -15,7 +15,6 @@ fastrand = "2.4.1"
 snafu = "0.8"
 string-interner = { version = "0.15", features = ["backends"] }
 smallvec = "1.13"
-packed_struct = "0.4"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

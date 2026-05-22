@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-pub fn tokenize_whitespace_count(content: &str, dst: &mut Vec<Arc<str>>, max_tokens: usize) -> usize {
+pub fn tokenize_whitespace_count(
+    content: &str,
+    dst: &mut Vec<Arc<str>>,
+    max_tokens: usize,
+) -> usize {
     if content.is_empty() || max_tokens == 0 {
         return 0;
     }

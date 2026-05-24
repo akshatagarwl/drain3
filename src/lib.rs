@@ -304,7 +304,7 @@ impl Matcher {
             prefilter_buckets: Vec::new(),
             has_param_first: false,
             interner,
-            token_buf: Mutex::new(Vec::new()),
+            token_buf: Mutex::new(Vec::with_capacity(16)),
         }
     }
     fn resolve_token_id<T: AsRef<str>>(&self, token: T) -> TokenId {

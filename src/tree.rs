@@ -92,7 +92,7 @@ pub(crate) struct Node {
 impl Node {
     pub fn new() -> Self {
         Self {
-            children: std::collections::HashMap::new(),
+            children: std::collections::HashMap::with_capacity_and_hasher(8, Default::default()),
             cluster_ids: Vec::new(),
         }
     }

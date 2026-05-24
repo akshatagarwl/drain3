@@ -38,6 +38,17 @@ pub fn tokenize(
     if trimmed.is_empty() {
         return;
     }
+
+    // Fast path: no extra delimiters - use split_whitespace (zero allocation)
+    if extra_delimiters.is_empty() {
+        dst.reserve(16.min(max_tokens));
+        for t in trimmed.split_whitespace().take(max_tokens) {
+            dst.push(Arc::from(t));
+        }
+        return;
+    }
+
+    // Slow path: need delimiter replacement
     let mut s = trimmed.to_string();
     for d in extra_delimiters {
         if !d.is_empty() {

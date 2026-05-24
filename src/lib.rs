@@ -499,10 +499,8 @@ impl Matcher {
         tc: usize,
     ) -> Option<usize> {
         let mut cur_idx = cur_idx;
-        for (cur_depth, tok) in (1..).zip(tokens.iter()) {
-            if cur_depth >= max_depth || cur_depth == tc {
-                break;
-            }
+        let limit = (max_depth - 1).min(tc - 1);
+        for tok in tokens.iter().take(limit) {
             let tid = self.resolve_token_id(tok);
             let next = self.nodes[cur_idx]
                 .children

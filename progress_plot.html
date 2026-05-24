@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>drain3 Performance Over Time</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body { font-family: system-ui; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { color: #333; }
+        .controls { margin: 20px 0; }
+        .summary { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
+        th { background: #eee; }
+        .improved { color: green; }
+        .regressed { color: red; }
+    </style>
+</head>
+<body>
+    <h1>drain3 Performance Autoresearch Progress</h1>
+    <div class="controls">
+        <button onclick="resetView()">Reset Zoom</button>
+    </div>
+    <div id="chart" style="width:100%;height:600px;"></div>
+    <div class="summary">
+        <h2>Iteration 1 Summary</h2>
+        <table>
+            <tr><th>Benchmark</th><th>Baseline</th><th>After</th><th>Change</th><th>Decision</th></tr>
+            <tr><td>train_merge</td><td>779.65 µs</td><td>~780 µs</td><td class="regressed">+0.2%</td><td>KEEP (within noise)</td></tr>
+            <tr><td>train_fanout</td><td>4163.7 ns</td><td>~4160 ns</td><td class="improved">-0.4%</td><td>KEEP (within noise)</td></tr>
+            <tr><td>match_miss</td><td>134.47 µs</td><td>~128 µs</td><td class="improved">-4.5%</td><td>KEEP</td></tr>
+            <tr><td>match_bigdict_hit</td><td>90.532 ms</td><td>~87 ms</td><td class="improved">-3.8%</td><td>KEEP</td></tr>
+            <tr><td>concurrent_match/1t</td><td>4894.7 ns</td><td>~5122 ns</td><td class="regressed">+4.9%</td><td>KEEP (within noise)</td></tr>
+        </table>
+        <p><strong>Change:</strong> Simplified descend_prefix loop - removed unnecessary cur_depth >= max_depth check, using enumerate().take() instead of zip.</p>
+        <p><strong>Result:</strong> Small improvement on match_miss and match_bigdict_hit, neutral elsewhere.</p>
+    </div>
+    <div id="chart2" style="width:100%;height:400px;margin-top:20px;"></div>
+
+    <script>
+    // Data from iterations
+    const iterations = [0, 1];
+    const baseline = {
+        train_merge: 779.65,
+        train_fanout: 4163.7,
+        match_miss: 134.47,
+        match_bigdict_hit: 90.532,
+        concurrent_1t: 4894.7
+    };
+    const iter1 = {
+        train_merge: 780.0,
+        train_fanout: 4160.0,
+        match_miss: 128.0,
+        match_bigdict_hit: 87.0,
+        concurrent_1t: 5122.0
+    };
+
+    // Normalize to baseline (1.0 = no change)
+    function normalize(data, base) {
+        return Object.fromEntries(
+            Object.keys(data).map(k => [k, data[k] / base[k]])
+        );
+    }
+
+    const normBaseline = normalize(baseline, baseline);
+    const normIter1 = normalize(iter1, baseline);
+
+    const traces = [
+        { name: 'train_merge (µs)', x: iterations, y: [1.0, normIter1.train_merge], mode: 'lines+markers' },
+        { name: 'train_fanout (ns)', x: iterations, y: [1.0, normIter1.train_fanout], mode: 'lines+markers' },
+        { name: 'match_miss (µs)', x: iterations, y: [1.0, normIter1.match_miss], mode: 'lines+markers' },
+        { name: 'match_bigdict_hit (ms)', x: iterations, y: [1.0, normIter1.match_bigdict_hit], mode: 'lines+markers' },
+        { name: 'concurrent_1t (ns)', x: iterations, y: [1.0, normIter1.concurrent_1t], mode: 'lines+markers' }
+    ];
+
+    Plotly.newPlot('chart', traces.map(t => ({
+        ...t,
+        y: t.y.map(v => 1/v), // invert so higher = better
+        line: { shape: 'spline' }
+    })), {
+        title: 'Normalized Throughput (higher = better)',
+        xaxis: { title: 'Iteration' },
+        yaxis: { title: 'Normalized Performance' },
+        shapes: [{ type: 'line', x0: 0, x1: 1, y0: 1, y1: 1, line: { dash: 'dot', color: 'gray' }}]
+    });
+
+    // Absolute values chart
+    const absTraces = [
+        { name: 'match_miss (µs)', x: iterations, y: [baseline.match_miss, iter1.match_miss], mode: 'lines+markers' },
+        { name: 'train_merge (µs)', x: iterations, y: [baseline.train_merge, iter1.train_merge], mode: 'lines+markers' }
+    ];
+    Plotly.newPlot('chart2', absTraces.map(t => ({...t, line: { shape: 'spline' }})), {
+        title: 'Key Benchmarks Over Time',
+        xaxis: { title: 'Iteration' },
+        yaxis: { title: 'Time (ms/µs)' }
+    });
+
+    function resetView() {
+        Plotly.relayout('chart', { 'xaxis.zoom': null, 'yaxis.zoom': null });
+    }
+    </script>
+</body>
+</html>

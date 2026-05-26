@@ -5,7 +5,6 @@ on:
       - 'v*'
 jobs:
   publish:
-    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

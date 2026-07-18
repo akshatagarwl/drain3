@@ -173,7 +173,13 @@ impl From<usize> for ClusterId {
 pub struct MaskingInstruction {
     /// Regular expression matched against the raw line.
     pub pattern: String,
-    /// Literal replacement for each match, typically a placeholder like `<NUM>`.
+    /// Replacement for each match, typically a placeholder like `<NUM>`.
+    ///
+    /// Capture references are expanded (`$0`, `$1`, `${name}`); write `$$` for a
+    /// literal `$`. This lets a rule re-emit context it had to capture — e.g.
+    /// pattern `(^|[^\w])(-?\d+)` with mask `${1}<NUM>` masks `code=-1` to
+    /// `code=<NUM>` while leaving the hyphen in `thread-0` → `thread-<NUM>`,
+    /// which a plain-literal mask cannot do (the `regex` crate has no lookbehind).
     pub mask: String,
 }
 
@@ -363,9 +369,11 @@ impl Matcher {
     fn apply_masking(&self, line: &str) -> String {
         let mut out = line.to_string();
         for (re, mask) in &self.masking {
-            out = re
-                .replace_all(&out, regex::NoExpand(mask.as_ref()))
-                .into_owned();
+            // `&str` replacement expands `$1`/`${name}` capture references so a
+            // rule can preserve context it had to capture (e.g. the boundary
+            // char in front of a number). Masks without `$` are unaffected; use
+            // `$$` for a literal `$`.
+            out = re.replace_all(&out, mask.as_ref()).into_owned();
         }
         out
     }

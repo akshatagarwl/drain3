@@ -402,6 +402,39 @@ fn masking_applies_rules_in_order() {
     );
 }
 
+// A mask may reference capture groups, so a rule can re-emit the boundary char
+// it had to consume. This masks a punctuation-led number including its sign
+// (`code=-1` → `code=<NUM>`) while leaving a digit that merely follows a hyphen
+// inside a word alone-ish (`thread-0` → `thread-<NUM>`), and never touching a
+// digit inside an identifier (`user_0`). None of this is expressible without
+// capture expansion, since the `regex` crate has no lookbehind.
+#[test]
+fn masking_supports_capture_group_expansion() {
+    let masking = vec![MaskingInstruction {
+        pattern: r"(^|[^\w])(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)".into(),
+        mask: "${1}<NUM>".into(),
+    }];
+    let cfg = Config::builder().masking(masking).build();
+    // Two lines that differ only in the numeric values collapse to one template.
+    let samples: Vec<String> = vec![
+        "worker thread-0 code=-1 took 42.5ms on user_0".into(),
+        "worker thread-3 code=-7 took 13.0ms on user_0".into(),
+    ];
+    let m = train(&samples, cfg).unwrap();
+    assert_eq!(m.templates().len(), 1, "numeric variants must collapse");
+    let (id, args, ok) = m.match_line("worker thread-9 code=-2 took 88.0ms on user_0");
+    assert!(ok);
+    assert!(
+        args.is_empty(),
+        "masked numbers must not be <*> params: {args:?}"
+    );
+    let t = m.template_for_id(id).unwrap();
+    assert_eq!(
+        render_template_placeholders(&t, "<*>"),
+        "worker thread-<NUM> code=<NUM> took <NUM>ms on user_0"
+    );
+}
+
 #[test]
 fn invalid_masking_regex_is_reported() {
     let cfg = Config::builder()

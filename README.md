@@ -41,6 +41,12 @@ let cfg = Config::builder()
 // not extracted as <*> params).
 ```
 
+Masks expand capture references (`$1`, `${name}`; `$$` for a literal `$`), so a
+rule can re-emit context it had to capture. For example `(^|[^\w])(-?\d+)` with
+mask `${1}<NUM>` masks `code=-1` → `code=<NUM>` yet leaves the hyphen in
+`thread-0` → `thread-<NUM>` — behavior a plain-literal mask can't express, since
+the `regex` crate has no lookbehind.
+
 An invalid pattern surfaces as `Error::InvalidMaskingRegex` from `train`
 (or panics from `Matcher::new`, which does not validate).
 

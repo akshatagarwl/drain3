@@ -23,6 +23,7 @@
 //! # Ok(())
 //! # }
 //! ```
+use regex::Regex;
 use smallvec::SmallVec;
 use snafu::Snafu;
 use std::sync::{Arc, Mutex};
@@ -82,6 +83,12 @@ pub enum Error {
     /// Line exceeds max_bytes configuration.
     #[snafu(display("line too long: {length} bytes (max: {max_bytes})"))]
     LineTooLong { length: usize, max_bytes: usize },
+    /// A masking instruction's pattern failed to compile as a regex.
+    #[snafu(display("invalid masking regex {pattern:?}: {source}"))]
+    InvalidMaskingRegex {
+        pattern: String,
+        source: regex::Error,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -153,6 +160,23 @@ impl From<usize> for ClusterId {
     }
 }
 
+/// A regex-based masking rule applied to each log line before tokenization.
+///
+/// Every match of `pattern` is replaced with `mask` (e.g. `<NUM>`, `<IP>`),
+/// collapsing high-cardinality values (numbers, IPs, UUIDs, hashes) into stable
+/// tokens so they do not spawn distinct clusters. Rules are applied in order, so
+/// list the most specific patterns first (e.g. UUID before a generic hex rule).
+///
+/// This mirrors `logpai/Drain3`'s masking instructions and moves pre-masking
+/// into the matcher itself, so callers no longer need a bespoke masking pass.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaskingInstruction {
+    /// Regular expression matched against the raw line.
+    pub pattern: String,
+    /// Literal replacement for each match, typically a placeholder like `<NUM>`.
+    pub mask: String,
+}
+
 /// Controls training and matching behavior.
 #[derive(Debug, Clone, PartialEq, bon::Builder)]
 pub struct Config {
@@ -178,6 +202,9 @@ pub struct Config {
     pub extra_delimiters: Vec<String>,
     #[builder(default = true)]
     pub enable_match_prefilter: bool,
+    /// Masking rules applied to each line before tokenization. Empty = disabled.
+    #[builder(default)]
+    pub masking: Vec<MaskingInstruction>,
 }
 
 impl Config {
@@ -213,6 +240,12 @@ impl Config {
         if self.param_string.is_empty() {
             return Err(Error::EmptyParamString);
         }
+        for mi in &self.masking {
+            Regex::new(&mi.pattern).map_err(|source| Error::InvalidMaskingRegex {
+                pattern: mi.pattern.clone(),
+                source,
+            })?;
+        }
         Ok(())
     }
 }
@@ -231,6 +264,7 @@ impl Default for Config {
             parametrize_numeric_tokens: true,
             extra_delimiters: Vec::new(),
             enable_match_prefilter: true,
+            masking: Vec::new(),
         }
     }
 }
@@ -287,11 +321,27 @@ pub struct Matcher {
     has_param_first: bool,
     interner: StringInterner<BucketBackend<usize>>,
     token_buf: Mutex<Vec<Arc<str>>>,
+    masking: Vec<(Regex, Arc<str>)>,
 }
 impl Matcher {
+    /// Construct a matcher from a config.
+    ///
+    /// # Panics
+    /// Panics if any [`MaskingInstruction`] pattern is not a valid regex. Use
+    /// [`train`] (which validates the config) first to surface this as an
+    /// [`Error::InvalidMaskingRegex`] instead of a panic.
     pub fn new(cfg: Config) -> Self {
         let mut interner = StringInterner::new();
         let param_id = TokenId::from(interner.get_or_intern(&cfg.param_string));
+        let masking = cfg
+            .masking
+            .iter()
+            .map(|mi| {
+                let re = Regex::new(&mi.pattern)
+                    .unwrap_or_else(|e| panic!("invalid masking regex {:?}: {e}", mi.pattern));
+                (re, Arc::from(mi.mask.as_str()))
+            })
+            .collect();
         Self {
             cfg: cfg.clone(),
             templates: Vec::new(),
@@ -305,7 +355,19 @@ impl Matcher {
             has_param_first: false,
             interner,
             token_buf: Mutex::new(Vec::with_capacity(16)),
+            masking,
         }
+    }
+    /// Apply masking rules in order, returning the rewritten line. Only called
+    /// when `masking` is non-empty.
+    fn apply_masking(&self, line: &str) -> String {
+        let mut out = line.to_string();
+        for (re, mask) in &self.masking {
+            out = re
+                .replace_all(&out, regex::NoExpand(mask.as_ref()))
+                .into_owned();
+        }
+        out
     }
     fn resolve_token_id<T: AsRef<str>>(&self, token: T) -> TokenId {
         self.interner
@@ -360,6 +422,8 @@ impl Matcher {
     }
 
     fn find_match_with_tc(&self, line: &str) -> (Option<ClusterId>, usize) {
+        let masked = (!self.masking.is_empty()).then(|| self.apply_masking(line));
+        let line = masked.as_deref().unwrap_or(line);
         let mut token_buf = self.token_buf.lock().unwrap();
         token_buf.clear();
         if !self.has_param_first && self.cfg.extra_delimiters.is_empty() {
@@ -612,6 +676,8 @@ impl Matcher {
         Ok(id)
     }
     pub fn add_log_message(&mut self, content: &str) -> Result<Template, Error> {
+        let masked = (!self.masking.is_empty()).then(|| self.apply_masking(content));
+        let content = masked.as_deref().unwrap_or(content);
         let tc = self.tokenize_input(content).ok_or(Error::LineTooLong {
             length: content.len(),
             max_bytes: self.cfg.max_bytes,

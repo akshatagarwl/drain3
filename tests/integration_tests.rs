@@ -1,4 +1,4 @@
-use drain3::{train, Config, Error};
+use drain3::{train, Config, Error, MaskingInstruction};
 use std::collections::HashMap;
 
 fn render_template_placeholders(t: &drain3::Template, param_str: &str) -> String {
@@ -324,4 +324,96 @@ fn concurrent_find_is_sync_safe() {
     for h in handles {
         h.join().expect("thread panicked");
     }
+}
+
+fn num_masking() -> Vec<MaskingInstruction> {
+    vec![MaskingInstruction {
+        pattern: r"\d+".into(),
+        mask: "<NUM>".into(),
+    }]
+}
+
+// Lines that differ only in numeric values collapse into ONE cluster whose
+// template carries the stable `<NUM>` placeholder, and the number is not
+// extracted as a `<*>` parameter (it is part of the template, not a variable).
+#[test]
+fn masking_collapses_numeric_variants() {
+    let samples: Vec<String> = vec![
+        "user 1001 logged in from port 8080".into(),
+        "user 2002 logged in from port 9090".into(),
+    ];
+    let cfg = Config::builder().masking(num_masking()).build();
+    let m = train(&samples, cfg).unwrap();
+
+    let (id, args, ok) = m.match_line("user 3003 logged in from port 7070");
+    assert!(ok);
+    assert!(
+        args.is_empty(),
+        "masked numbers must not be <*> params: {args:?}"
+    );
+    assert_eq!(m.templates().len(), 1);
+    let t = m.template_for_id(id).unwrap();
+    assert_eq!(
+        render_template_placeholders(&t, "<*>"),
+        "user <NUM> logged in from port <NUM>"
+    );
+}
+
+// Without masking the same lines produce a `<*>` param for the varying number,
+// proving masking is what changes the outcome above.
+#[test]
+fn without_masking_number_is_a_param() {
+    let samples: Vec<String> = vec![
+        "user 1001 logged in from port 8080".into(),
+        "user 2002 logged in from port 9090".into(),
+    ];
+    let m = train(&samples, Config::default()).unwrap();
+    let (_, args, ok) = m.match_line("user 3003 logged in from port 7070");
+    assert!(ok);
+    assert_eq!(args, vec!["3003", "7070"]);
+}
+
+// Rules apply in order: a specific IPv4 rule runs before the generic number rule
+// so an address is masked as one `<IP>` rather than four `<NUM>`s.
+#[test]
+fn masking_applies_rules_in_order() {
+    let masking = vec![
+        MaskingInstruction {
+            pattern: r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b".into(),
+            mask: "<IP>".into(),
+        },
+        MaskingInstruction {
+            pattern: r"\d+".into(),
+            mask: "<NUM>".into(),
+        },
+    ];
+    let samples: Vec<String> = vec![
+        "connection from 10.0.0.1 took 5 ms".into(),
+        "connection from 10.0.0.2 took 9 ms".into(),
+    ];
+    let cfg = Config::builder().masking(masking).build();
+    let m = train(&samples, cfg).unwrap();
+    let (id, _, ok) = m.match_line("connection from 192.168.1.1 took 3 ms");
+    assert!(ok);
+    let t = m.template_for_id(id).unwrap();
+    assert_eq!(
+        render_template_placeholders(&t, "<*>"),
+        "connection from <IP> took <NUM> ms"
+    );
+}
+
+#[test]
+fn invalid_masking_regex_is_reported() {
+    let cfg = Config::builder()
+        .masking(vec![MaskingInstruction {
+            pattern: "(".into(),
+            mask: "<X>".into(),
+        }])
+        .build();
+    let samples: Vec<String> = Vec::new();
+    let err = match train(&samples, cfg) {
+        Ok(_) => panic!("expected InvalidMaskingRegex error"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, Error::InvalidMaskingRegex { .. }), "{err:?}");
 }
